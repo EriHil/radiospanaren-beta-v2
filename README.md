@@ -94,7 +94,7 @@ För distributioner där systemets GTK är för gammalt (t.ex. äldre Ubuntu/Deb
 finns ett Flatpak-paket som tar med egna bibliotek. Se [flatpak/README.md](flatpak/README.md):
 
 ```bash
-flatpak install flathub org.flatpak.Builder org.gnome.Platform//48 org.gnome.Sdk//48
+flatpak install flathub org.flatpak.Builder org.gnome.Platform//51 org.gnome.Sdk//51
 flatpak run org.flatpak.Builder --user --install --force-clean build-dir flatpak/se.eh.Radiospanaren.yaml
 flatpak run se.eh.Radiospanaren
 ```

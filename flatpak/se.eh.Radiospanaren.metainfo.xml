@@ -42,6 +42,13 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.1.1" date="2026-11-05">
+      <description>
+        <p>Flatpak med GNOME 51-körtid (GTK 4.24, Python 3.14, libshumate
+           1.5.5, numpy 2.5.4, scipy 1.18.1). Inga funktionsändringar sedan
+           2.1.0.</p>
+      </description>
+    </release>
     <release version="2.1.0" date="2026-11-05">
       <description>
         <p>Frekvenskalibrering, Flatpak-paket, verifierat på Debian 13. Rättat:

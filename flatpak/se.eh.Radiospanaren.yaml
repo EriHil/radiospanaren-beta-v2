@@ -1,7 +1,7 @@
 # Flatpak-manifest för Radiospanaren.
 #
-# Bygg (kräver flatpak-builder och GNOME 48-körtiden):
-#   flatpak install flathub org.flatpak.Builder org.gnome.Platform//48 org.gnome.Sdk//48
+# Bygg (kräver flatpak-builder och GNOME 51-körtiden):
+#   flatpak install flathub org.flatpak.Builder org.gnome.Platform//51 org.gnome.Sdk//51
 #   flatpak run org.flatpak.Builder --user --install --force-clean build-dir \
 #       flatpak/se.eh.Radiospanaren.yaml
 #   flatpak run se.eh.Radiospanaren
@@ -9,7 +9,7 @@
 # Appen får rå USB-åtkomst (--device=all) för RTL-SDR och ljud via PulseAudio/PipeWire.
 app-id: se.eh.Radiospanaren
 runtime: org.gnome.Platform
-runtime-version: '48'
+runtime-version: '51'
 sdk: org.gnome.Sdk
 command: radiospanaren
 
@@ -21,7 +21,7 @@ finish-args:
   - --share=network          # OSM-kartrutor, rtl_tcp och webbgränssnittet
   - --device=all             # rå USB-åtkomst till RTL-SDR-dongeln
   - --filesystem=xdg-music:create   # inspelningar hamnar i ~/Musik/Radiospanaren
-  - --env=PYTHONPATH=/app/lib/python3.12/site-packages
+  - --env=PYTHONPATH=/app/lib/python3.14/site-packages
 
 cleanup:
   - /include
@@ -67,23 +67,23 @@ modules:
       - -Ddemos=false
     sources:
       - type: archive
-        url: https://download.gnome.org/sources/libshumate/1.4/libshumate-1.4.0.tar.xz
-        sha256: 3984368e0259862b3810d1ddc86d2dadd6d372a2b32376ccf4aff7c2e48c6d30
+        url: https://download.gnome.org/sources/libshumate/1.5/libshumate-1.5.5.tar.xz
+        sha256: ce27d88537a37cd5c45959c3bb7cc18c1c18b3d2e663d02bcf46fc66f7414a92
 
   # ── numpy och scipy (färdiga hjul, ingen kompilering) ──
   - name: python-deps
     buildsystem: simple
     build-commands:
       - pip3 install --no-index --no-build-isolation --prefix=${FLATPAK_DEST}
-        numpy-2.2.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-        scipy-1.15.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+        numpy-2.5.4-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+        scipy-1.18.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
     sources:
       - type: file
-        url: https://files.pythonhosted.org/packages/02/e2/e2cbb8d634151aab9528ef7b8bab52ee4ab10e076509285602c2a3a686e0/numpy-2.2.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-        sha256: 4f92084defa704deadd4e0a5ab1dc52d8ac9e8a8ef617f3fbb853e79b0ea3592
+        url: https://files.pythonhosted.org/packages/16/d5/928078d2b28f26829b138b4a6c3980045022fb409f570657a224ae60ef4e/numpy-2.5.4-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+        sha256: d549420b8858885cea8838a727842249218b9c1da24dd517e25c9c7a948310a3
       - type: file
-        url: https://files.pythonhosted.org/packages/0b/1f/03f52c282437a168ee2c7c14a1a0d0781a9a4a8962d84ac05c06b4c5b555/scipy-1.15.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-        sha256: 271e3713e645149ea5ea3e97b57fdab61ce61333f97cfae392c28ba786f9bb49
+        url: https://files.pythonhosted.org/packages/6b/89/2a844506d49651e9aa1af6ef95b6bd8031cb1d5a4375edec6155037e04cf/scipy-1.18.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+        sha256: ac0333bdf38309aa3dcbe7e3fa7ea29e7a2c37c6ea306a757b700ded8e4596ad
 
   # ── Själva Radiospanaren ──
   - name: radiospanaren

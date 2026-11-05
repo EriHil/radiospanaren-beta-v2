@@ -1,5 +1,10 @@
 # Ändringslogg
 
+## 2.1.1 (2026-11-05)
+
+- **Flatpak: GNOME 51-körtid** i stället för GNOME 48, som nått slutet på sin livstid. GTK 4.24, libadwaita 1.10, Python 3.14, libshumate 1.5.5, numpy 2.5.4 och scipy 1.18.1.
+- Inga funktionsändringar; samma program som 2.1.0.
+
 ## 2.1.0 – "beta v2.1" (2026-11-05)
 
 - **Flatpak-paketering** (`flatpak/`): kör på valfri distribution oavsett systemets GTK-version, med egna bibliotek (GTK4, libadwaita, libshumate, librtlsdr, numpy, scipy). Byggt och verifierat mot GNOME 48-körtiden.

@@ -9,7 +9,7 @@ systempaketen är för gamla för det vanliga installationsskriptet.
 
 ```sh
 # Verktyg och körtid (en gång)
-flatpak install flathub org.flatpak.Builder org.gnome.Platform//48 org.gnome.Sdk//48
+flatpak install flathub org.flatpak.Builder org.gnome.Platform//51 org.gnome.Sdk//51
 
 # Bygg och installera för den inloggade användaren
 cd radiospanaren-beta-v2
@@ -46,8 +46,8 @@ musikmappen för inspelningar.
 - **SDR-dongeln:** udev-reglerna som ger åtkomst till dongeln ligger på värdsystemet,
   inte i Flatpak. De installeras av paketet `rtl-sdr` (eller manuellt). Utan dem
   når bara root dongeln.
-- **Körtid:** manifestet använder GNOME 48. Höj `runtime-version` när du byter till
-  en nyare GNOME-körtid (och uppdatera Python-hjulens `cp3XX` vid behov).
+- **Körtid:** manifestet använder GNOME 51 (Python 3.14). Höj `runtime-version` när du byter till
+  en nyare GNOME-körtid (och uppdatera Python-hjulens `cp3XX` samt `PYTHONPATH` vid behov).
 - **Wayland utan GPU:** i en GPU-lös miljö (t.ex. vissa virtuella maskiner) kan GTK:s
   Wayland-läge krascha i dmabuf-förhandlingen. Starta då med `GDK_BACKEND=x11`
   (XWayland). På en vanlig skrivbordsdator med grafikdrivrutin behövs det inte.
