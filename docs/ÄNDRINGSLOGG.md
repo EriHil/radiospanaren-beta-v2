@@ -1,5 +1,17 @@
 # Ändringslogg
 
+## 2.0.0 – "beta v2" (2026-11-05)
+
+Samlar funktionerna från 1.2–1.4 under en version: AIS, ADS-B och spektrumanalys.
+- **Flygradar (ADS-B, 1090 MHz)** – flygplan på OpenStreetMap-karta (1.2.0).
+- **Fartygskarta (AIS)** – fartyg på karta med typfärg och spår (1.3.0).
+- **Aktivitetskarta (spektrumanalys)** – värmekarta över ett band, med WFM 96–108 MHz uteslutet (1.4.0).
+- Avkodare för ACARS, AIS och APRS, CRC-kontrollerade.
+- Fungerar på Fedora 40+, Ubuntu 24.04+, Linux Mint 22+ och Debian 13+; kartan installeras automatiskt.
+
+Detaljerna för varje del står under respektive delversion nedan.
+
+
 ## 1.4.0 (2026-11-05)
 
 ### Nytt: Aktivitetskarta

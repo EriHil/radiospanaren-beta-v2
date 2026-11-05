@@ -1,5 +1,5 @@
 ══════════════════════════════════════════════════════════════════════
-  RADIOSPANAREN – MANUAL                                   version 1.4.0
+  RADIOSPANAREN – MANUAL                                   version 2.0.0
   SDR-mottagare, radioskanner och signallogg för Fedora
 ══════════════════════════════════════════════════════════════════════
 
@@ -270,8 +270,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   Kräver GTK 4.12+ och libadwaita 1.5+, dvs. Fedora 40+, Ubuntu 24.04+,
   Linux Mint 22+ eller Debian 13+. (Ubuntu 22.04 / Mint 21 är för gamla.)
 
-    tar xzf radiospanaren-1.4.0.tar.gz
-    cd radiospanaren-1.4.0
+    tar xzf radiospanaren-2.0.0.tar.gz
+    cd radiospanaren-2.0.0
     ./installera.sh
 
   Skriptet installerar saknade paket (apt eller dnf, frågar först),

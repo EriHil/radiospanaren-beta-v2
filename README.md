@@ -1,10 +1,10 @@
-# Radiospanaren beta v1
+# Radiospanaren beta v2
 
-**SDR-mottagare, radioskanner, signallogg och avkodare för Linux – på svenska.**
+**SDR-mottagare, radioskanner, signallogg, avkodare (ACARS, AIS, ADS-B, APRS) och spektrumanalys för Linux – på svenska.**
 
 Radiospanaren gör en billig RTL-SDR-dongel till en komplett mottagarstation med grafiskt gränssnitt. Programmet kombinerar idéer från SDR++ (spektrum, vattenfall, demodulering), WaveShark (automatisk signallogg med filter) och KiwiSDR (bandplan, HF, webbmottagare) med en riktig radioskanner och avkodare för ACARS, AIS och APRS.
 
-> **Beta:** Programmet fungerar och är testat, men det är tidig programvara. Se [Status och kända begränsningar](#status-och-kända-begränsningar).
+> **Beta v2:** Programmet fungerar och är testat, men det är tidig programvara. Den här versionen samlar allt: mottagare och skanner, signallogg, avkodare för ACARS, AIS och APRS, **Flygradar (ADS-B med karta)**, **fartygskarta (AIS)** och **aktivitetskarta (spektrumanalys)**. Se [Status och kända begränsningar](#status-och-kända-begränsningar).
 
 ![AIS-avkodning](docs/bilder/ais-avkodning.png)
 
