@@ -2673,6 +2673,8 @@ def run_gui(args):
                 GLib.idle_add(self._start_web)
             if args.start or args.skanna:
                 GLib.idle_add(lambda: self.btn_start.set_active(True) or False)
+            if args.kalibrera:
+                GLib.timeout_add(900, lambda: self._open_calibration() or False)
             if args.aktivitetskarta:
                 GLib.timeout_add(800, lambda: self._open_activity() or False)
             if args.fartygskarta:
@@ -2800,7 +2802,8 @@ def run_gui(args):
             self._switch(g, "Automatisk förstärkning", c["auto_gain"], self._on_auto_gain)
             self.gain_row = self._spin(g, "Förstärkning (dB)", 0, 49.6, 0.5, c["gain"], 1, self._on_gain)
             self.gain_row.set_sensitive(not c["auto_gain"])
-            self._spin(g, "Frekvenskorrigering (ppm)", -200, 200, 1, c["ppm"], 0, self._on_ppm)
+            self.ppm_row = self._spin(g, "Frekvenskorrigering (ppm)", -200, 200, 1, c["ppm"], 0, self._on_ppm)
+            self._button(g, "Kalibrera frekvens (ppm) …", self._open_calibration)
             self._combo(g, "Direktsampling (HF under 28 MHz)", ["Av", "I-gren", "Q-gren (RTL-SDR v3)"], c["direct"],
                         self._on_direct)
             self._switch(g, "Bias-T (matar antennförstärkare)", c["biast"], self._on_biast)
@@ -3154,6 +3157,140 @@ def run_gui(args):
         def _on_ppm(self, v):
             self.conf["ppm"] = int(v)
             self._src_set("ppm", int(v))
+
+        # ── frekvenskalibrering ──
+        def _calib_measure(self, true_hz):
+            """Mäter var en bärvåg på true_hz faktiskt hamnar och räknar ut korrigeringen.
+            Returnerar dict, "range" (utanför fönstret) eller None (ingen data än)."""
+            e = self.engine
+            avg, c, cnt = e.get_avg()
+            if avg is None or c is None or cnt < 4:
+                return None
+            N = FFT_N
+            k_exp = (true_hz - c) / BIN_HZ + N / 2
+            if not (5 < k_exp < N - 5):
+                return "range"
+            win = 60
+            k0 = int(max(1, k_exp - win))
+            k1 = int(min(N - 1, k_exp + win))
+            kp = k0 + int(np.argmax(avg[k0:k1]))
+            floor = float(np.median(avg))
+            snr = 10 * math.log10(avg[kp] / (floor + 1e-20) + 1e-20)
+            d = 0.0
+            if 0 < kp < N - 1:
+                a = math.log(avg[kp - 1] + 1e-20)
+                b = math.log(avg[kp] + 1e-20)
+                cc = math.log(avg[kp + 1] + 1e-20)
+                den = a - 2 * b + cc
+                if den:
+                    d = max(-1.0, min(1.0, 0.5 * (a - cc) / den))
+            meas = c + (kp + d - N / 2) * BIN_HZ
+            apparent_ppm = (meas - true_hz) / true_hz * 1e6
+            return {"snr": snr, "offset": meas - true_hz, "apparent_ppm": apparent_ppm,
+                    "suggested": self.conf["ppm"] - apparent_ppm}
+
+        def _open_calibration(self):
+            from collections import deque as _dq
+            win = Adw.Window(title="Kalibrera frekvens", modal=True, transient_for=self, default_width=470)
+            tv = Adw.ToolbarView()
+            tv.add_top_bar(Adw.HeaderBar())
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            box.set_margin_top(12)
+            box.set_margin_bottom(12)
+            box.set_margin_start(12)
+            box.set_margin_end(12)
+            info = Gtk.Label(wrap=True, xalign=0)
+            info.set_markup("Ställ in mottagaren på en <b>känd, stabil bärvåg</b> – t.ex. en tidssignal "
+                            "(RWM 4,996/9,996/14,996 MHz via direktsampling), en fyrsändare, en repeater "
+                            "eller en mellanvågssändare. Skriv den exakta frekvensen och tryck Mät.")
+            box.append(info)
+            g = Adw.PreferencesGroup()
+            fr = Adw.EntryRow(title="Känd frekvens (MHz)")
+            fr.set_text(fmt_mhz(self.freq))
+            g.add(fr)
+            sig_row = Adw.ActionRow(title="Signal", subtitle="–")
+            off_row = Adw.ActionRow(title="Uppmätt avvikelse", subtitle="–")
+            sug_row = Adw.ActionRow(title="Föreslagen korrigering", subtitle="–")
+            for r in (sig_row, off_row, sug_row):
+                g.add(r)
+            box.append(g)
+            btns = Gtk.Box(spacing=8, halign=Gtk.Align.END)
+            meas_btn = Gtk.ToggleButton(label="Mät")
+            meas_btn.add_css_class("suggested-action")
+            apply_btn = Gtk.Button(label="Använd")
+            apply_btn.set_sensitive(False)
+            btns.append(meas_btn)
+            btns.append(apply_btn)
+            box.append(btns)
+            tv.set_content(box)
+            win.set_content(tv)
+
+            state = {"timer": None, "hist": _dq(maxlen=10), "suggested": None, "true": None}
+
+            def stop_timer():
+                if state["timer"]:
+                    GLib.source_remove(state["timer"])
+                    state["timer"] = None
+
+            def tick():
+                r = self._calib_measure(state["true"])
+                if r is None:
+                    sig_row.set_subtitle("väntar på signal …")
+                    return True
+                if r == "range":
+                    sig_row.set_subtitle("frekvensen är utanför mottagningsfönstret")
+                    off_row.set_subtitle("–")
+                    sug_row.set_subtitle("–")
+                    apply_btn.set_sensitive(False)
+                    return True
+                sig_row.set_subtitle(f"{r['snr']:.0f} dB över brus"
+                                     + ("" if r["snr"] >= 15 else "  (svag – sikta på minst 15 dB)"))
+                state["hist"].append(r["apparent_ppm"])
+                med_app = float(np.median(state["hist"]))
+                sug = self.conf["ppm"] - med_app
+                off_hz = med_app * state["true"] / 1e6
+                off_row.set_subtitle(f"{off_hz:+.0f} Hz  ({med_app:+.1f} ppm)  – {len(state['hist'])} mätningar")
+                sug_row.set_subtitle(f"{round(sug):+d} ppm")
+                state["suggested"] = int(round(sug))
+                apply_btn.set_sensitive(r["snr"] >= 10 and len(state["hist"]) >= 3)
+                return True
+
+            def on_meas(btn):
+                if btn.get_active():
+                    if not self.engine.running:
+                        self.toast("Starta mottagningen först")
+                        btn.set_active(False)
+                        return
+                    try:
+                        state["true"] = parse_freq(fr.get_text())
+                    except ValueError as ex:
+                        self.toast(str(ex))
+                        btn.set_active(False)
+                        return
+                    self.tune(state["true"])      # ställ mottagaren på frekvensen
+                    state["hist"].clear()
+                    btn.set_label("■ Mäter …")
+                    fr.set_sensitive(False)
+                    if state["timer"] is None:
+                        state["timer"] = GLib.timeout_add(500, tick)
+                else:
+                    stop_timer()
+                    btn.set_label("Mät")
+                    fr.set_sensitive(True)
+
+            def on_apply(_b):
+                if state["suggested"] is None:
+                    return
+                v = max(-200, min(200, state["suggested"]))
+                self.ppm_row.set_value(v)       # uppdaterar conf + source via _on_ppm
+                log.info("Frekvenskalibrering: ppm satt till %+d (mot %.4f MHz)", v, state["true"] / 1e6)
+                self.toast(f"Frekvenskorrigering satt till {v:+d} ppm")
+                state["hist"].clear()           # mät om för att bekräfta ~0
+
+            meas_btn.connect("toggled", on_meas)
+            apply_btn.connect("clicked", on_apply)
+            win.connect("close-request", lambda *_: (stop_timer(), False)[1])
+            win.present()
 
         def _on_direct(self, i):
             self.conf["direct"] = i
@@ -4019,6 +4156,7 @@ def main():
     p.add_argument("--direktsampling", choices=["av", "i", "q"], help="direktsampling för HF (q för RTL-SDR v3/NESDR)")
     p.add_argument("--fartygskarta", action="store_true", help="öppna fartygskartan (AIS) direkt")
     p.add_argument("--aktivitetskarta", action="store_true", help="öppna aktivitetskartan direkt")
+    p.add_argument("--kalibrera", action="store_true", help="öppna frekvenskalibreringen direkt")
     p.add_argument("--flik", choices=["signallogg", "bokmarken", "avkodat"], help="flik att visa längst ner")
     p.add_argument("--skarmbild", nargs=2, metavar=("FIL", "SEKUNDER"),
                    help="spara en skärmbild av fönstret (PNG) efter angivet antal sekunder")

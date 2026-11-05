@@ -36,6 +36,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   radiospanaren --flik avkodat      Visa fliken Avkodat (signallogg, bokmarken)
   radiospanaren --fartygskarta      Öppna fartygskartan (AIS) direkt
   radiospanaren --aktivitetskarta   Öppna aktivitetskartan direkt
+  radiospanaren --kalibrera         Öppna frekvenskalibreringen direkt
   radiospanaren --squelch -15       Squelchnivå i dB
   radiospanaren --webb              Starta webbgränssnittet (port 8073)
   radiospanaren --webb 9000         ... på en annan port
@@ -169,6 +170,23 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
  Bokmärken (fliken längst ner)
   Skriv ett namn och tryck "Lägg till aktuell frekvens". Dubbelklicka för
   att lyssna. Från signalloggen: markera en rad → "Spara som bokmärke".
+
+ Kalibrera frekvensen (ppm)
+  Mottagare → "Kalibrera frekvens (ppm) …" mäter dongelns frekvensfel mot en
+  känd, stabil bärvåg och sätter korrigeringen automatiskt.
+  1. Starta mottagningen och öppna kalibreringen.
+  2. Skriv den exakta frekvensen för en känd sändare och tryck Mät.
+  3. Programmet visar signalstyrka, uppmätt avvikelse (Hz och ppm) och
+     föreslagen korrigering. Tryck Använd, så sätts ppm. Mät igen för att
+     bekräfta att avvikelsen går mot noll.
+  Bra referenser (exakta, atom-/GPS-styrda):
+    • Tidssignal RWM Moskva – 4,996 / 9,996 / 14,996 MHz (HF, direktsampling)
+    • En mellanvågssändare med rubidiumstyrd bärvåg, om någon stark når dig
+    • En repeater eller fyrsändare med känd frekvens
+  Obs: de flesta tidssignaler ligger på HF och kräver en HF-antenn och
+  direktsampling. Din NESDR SMArt v5 har en TCXO och behöver i praktiken
+  ingen korrigering (uppmätt fel under ca 2 ppm) – kalibreringen är främst
+  för finjustering vid HF/SSB eller om du byter dongel.
 
  HF (kortvåg, under 28 MHz)
   Välj Direktsampling → "Q-gren" i sidopanelen (fungerar på NESDR SMArt v5 och

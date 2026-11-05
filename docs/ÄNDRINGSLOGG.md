@@ -1,5 +1,10 @@
 # Ändringslogg
 
+## Efter 2.0.0 (opublicerat)
+
+- **Frekvenskalibrering**: "Kalibrera frekvens (ppm) …" i Mottagare (eller `--kalibrera`) mäter dongelns frekvensfel mot en känd bärvåg (t.ex. tidssignalen RWM) och sätter ppm automatiskt.
+- Rättat: loggraden "Mottagning startad" visade dongelns mittfrekvens i stället för den inställda frekvensen.
+
 ## 2.0.0 – "beta v2" (2026-11-05)
 
 Samlar funktionerna från 1.2–1.4 under en version: AIS, ADS-B och spektrumanalys.
