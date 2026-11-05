@@ -1,0 +1,269 @@
+══════════════════════════════════════════════════════════════════════
+  RADIOSPANAREN – MANUAL                                   version 1.1.0
+  SDR-mottagare, radioskanner och signallogg för Fedora
+══════════════════════════════════════════════════════════════════════
+
+Radiospanaren använder en SDR (t.ex. RTL-SDR-dongel) som mottagare och
+kombinerar:
+  • spektrum + vattenfall och demodulering (som SDR++)
+  • automatisk signallogg med filter (som WaveShark)
+  • HF via direktsampling, bandplan, bokmärken och webbmottagare (som KiwiSDR)
+  • skanner för bokmärken eller frekvensintervall
+
+Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
+
+
+──────────────────────────────────────────────────────────────────────
+ 1. KOMMANDON I TERMINALEN
+──────────────────────────────────────────────────────────────────────
+
+ Starta programmet
+ ─────────────────
+  radiospanaren                     Starta med senaste inställningar
+  radiospanaren --start             Starta och börja ta emot direkt
+  radiospanaren --simulator         Använd simulatorn (testa utan SDR)
+  radiospanaren --kalla rtl         Välj källa: rtl, tcp eller sim
+  radiospanaren --tcp 192.168.1.20:1234
+                                    Anslut till en rtl_tcp-server
+  radiospanaren --frekvens 145.5    Startfrekvens (MHz om ingen enhet)
+  radiospanaren --frekvens 7074k    ... med enhet: Hz, k, M, G
+  radiospanaren --mod NFM           Modulering: WFM NFM AM USB LSB CW
+  radiospanaren --direktsampling q  HF under 28,8 MHz (q = Q-gren, rätt för
+                                    NESDR SMArt v5 och RTL-SDR v3; i, av)
+  radiospanaren --acars             Slå på ACARS-avkodning (flygplan)
+  radiospanaren --ais               Slå på AIS-avkodning (fartyg)
+  radiospanaren --aprs              Slå på APRS-avkodning (144,800 MHz)
+  radiospanaren --flik avkodat      Visa fliken Avkodat (signallogg, bokmarken)
+  radiospanaren --squelch -15       Squelchnivå i dB
+  radiospanaren --webb              Starta webbgränssnittet (port 8073)
+  radiospanaren --webb 9000         ... på en annan port
+  radiospanaren --debug             Detaljerad loggning, även i terminalen
+
+  Skanner från terminalen
+  ───────────────────────
+  radiospanaren --skanna bokmarken  Starta mottagning + bokmärkesskanning
+  radiospanaren --skanna intervall --intervall 118-137 --kanalsteg 25
+                                    Skanna ett intervall (MHz) med kanalsteg (kHz)
+  --vantetid 2                      Sekunder att stanna efter att signalen tystnat
+  --max-lyssning 10                 Lämna en signal efter högst 10 s (0 = av)
+
+  Flaggorna kan kombineras, t.ex.:
+    radiospanaren --frekvens 121.5 --mod AM --start
+    radiospanaren --mod AM --skanna intervall --intervall 225-400 --kanalsteg 25 --squelch -15
+    radiospanaren --frekvens 131.725 --mod AM --acars --start
+    radiospanaren --frekvens 161.975 --mod NFM --ais --start --flik avkodat
+    radiospanaren --frekvens 144.8 --mod NFM --aprs --start
+    radiospanaren --direktsampling q --frekvens 14.074 --mod USB --start
+    radiospanaren --simulator --frekvens 131.725 --mod AM --acars --start   (test-ACARS)
+
+ Felsökning och hjälp
+ ────────────────────
+  radiospanaren --rapport           Skriv ut en felrapport (system,
+                                    versioner, SDR, senaste loggrader).
+                                    Klistra in den i Claude Code.
+  radiospanaren --fel               Visa bara fel och varningar ur loggen
+  radiospanaren --logg              Visa de senaste 100 loggraderna
+  radiospanaren --logg 500          Visa de senaste 500 loggraderna
+  radiospanaren --sjalvtest         Testa signalbehandlingen med simulatorn
+                                    (utan fönster). Ska sluta med "OK".
+  radiospanaren --sokvagar          Visa var alla filer ligger
+  radiospanaren --skarmbild FIL 10  Spara en skärmbild av fönstret efter 10 s
+  radiospanaren --rensa-logg        Töm loggfilerna
+  radiospanaren --aterstall         Återställ alla inställningar
+                                    (gamla sparas som config.json.bak)
+  radiospanaren --manual            Visa den här manualen
+  radiospanaren --version           Visa version
+  radiospanaren --help              Kort lista över alla flaggor
+
+ Få hjälp av Claude Code
+ ───────────────────────
+  Inne i Claude Code kan du skriva (med utropstecken först):
+      ! radiospanaren --rapport
+  så hamnar rapporten direkt i samtalet. Eller använd knappen
+  "Kopiera felrapport" i programmet (Felsökning) och klistra in.
+
+ Andra användbara kommandon (följer med paketet rtl-sdr)
+ ───────────────────────────────────────────────────────
+  rtl_test                          Kontrollera att dongeln hittas
+                                    (avbryt med Ctrl+C)
+  rtl_test -p                       Mät dongelns frekvensfel i ppm
+  rtl_tcp -a 0.0.0.0                Dela dongeln i nätverket, så andra
+                                    datorer kan ansluta med --tcp
+  rtl_eeprom                        Visa dongelns EEPROM-info
+  lsusb | grep -i rtl               Se om datorn ser dongeln
+
+
+──────────────────────────────────────────────────────────────────────
+ 2. ANVÄNDA PROGRAMMET
+──────────────────────────────────────────────────────────────────────
+
+ Vattenfall och spektrum
+  Vänsterklick ........ ställ in frekvensen där du klickar
+  Mushjul ............. stega frekvensen upp/ner (steglängd i sidopanelen)
+  Ctrl + mushjul ...... zooma in/ut
+  Högerklick + dra .... flytta mottagarens mittfrekvens
+  Överst .............. bandplan (färgade fält med bandnamn)
+  Gula trianglar ...... bokmärken
+  Gröna streck ........ signaler som signalloggen ser just nu
+  Röd linje ........... inställd frekvens; ljust fält = kanalens bandbredd
+
+ Frekvensrutan
+  Skriv t.ex. 145.5   145,500   7074k   1090 MHz   och tryck Enter.
+
+ Squelch
+  Ställ squelch strax över brusnivån (se nivåmätaren i titelraden).
+  -150 = alltid öppen. Skannern och automatisk inspelning kräver squelch.
+
+ Skanner (sidopanelen)
+  Bokmärken ........... går igenom alla bokmärken och stannar där
+                        squelch öppnar
+  Frekvensintervall ... söker igenom start–stopp med valt kanalsteg.
+                        Ett helt fönster (ca 1,2 MHz) analyseras på en
+                        gång, så skanningen går snabbt.
+  Väntetid ............ hur länge den stannar efter att signalen försvunnit
+  Max lyssningstid .... lämnar sändare som aldrig tystnar (0 = av)
+  ⏭ Hoppa över ........ (titelraden) spärrar frekvensen och går vidare
+  Hoppa över omodulerade bärvågor
+                        Dongeln och datorn skapar egna "störningar" (konstanta
+                        bärvågor, t.ex. 120,000 / 230,400 / 259,200 / 264,000 MHz).
+                        Skannern mäter om ljudet varierar som tal. Om inte
+                        hoppar den vidare efter ca 2,5 s och listar frekvensen
+                        under "Hittade störningar" – tryck "Spärra" för att
+                        spara dem permanent. Gäller AM och NFM.
+  Bokmärken som inte går att ta emot i aktuellt läge (VHF med direktsampling
+  på, eller HF utan) hoppas över automatiskt.
+
+ Signallogg (fliken längst ner)
+  Hittar automatiskt alla signaler som ligger en viss nivå över bruset.
+  Dubbelklicka på en rad för att lyssna. Klicka på en kolumnrubrik för att
+  sortera. "Typ" är en gissning utifrån bandbredden (ingen avkodning).
+
+  Filter (skriv i sökrutan, flera villkor = alla måste stämma):
+    freq>144 freq<146     frekvens i MHz (eller med enhet: 433920k)
+    bw<25k                bandbredd (kHz om ingen enhet; 500hz, 0.2m)
+    peak>-50              toppnivå i dB
+    snr>=20               signal/brus i dB
+    dur>2                 längd i sekunder
+    typ~NFM               typ innehåller "NFM"
+    band~amatör           band innehåller "amatör"
+    status==avslutad      bara avslutade
+    aktiv                 bara signaler som pågår
+    marin                 fri text söker i frekvens, typ, band och status
+  Operatorer: >  <  >=  <=  ==  !=  ~ (innehåller)
+
+ Bokmärken (fliken längst ner)
+  Skriv ett namn och tryck "Lägg till aktuell frekvens". Dubbelklicka för
+  att lyssna. Från signalloggen: markera en rad → "Spara som bokmärke".
+
+ HF (kortvåg, under 28 MHz)
+  Välj Direktsampling → "Q-gren" i sidopanelen (fungerar på NESDR SMArt v5 och
+  RTL-SDR v3; I-grenen är mycket sämre över 9 MHz). RTL-SDR v4 klarar HF utan.
+  Zooma in (Ctrl + mushjul) – vid zoom räknas spektrumet om med finare
+  upplösning (ner till ca 12 Hz), så att t.ex. FT8, CW och SSB syns.
+  En lång trådantenn behövs för bra HF-mottagning; teleskopantennen räcker
+  oftast bara till starka signaler.
+
+ Avkodare (sidopanelen → Avkodare, fliken "Avkodat")
+  Mottagarfönstret är ca 1,2 MHz brett, så det går att avkoda ett band i taget:
+  tryck "Gå till ACARS/AIS/APRS" (slår också på avkodaren).
+  AIS ................. fartyg på 161,975 och 162,025 MHz (GMSK 9600 bit/s).
+                        Båda kanalerna bevakas samtidigt. Visar MMSI, namn,
+                        anropssignal, fartygstyp (även militärt fartyg),
+                        position, fart, kurs, status och destination. Namnet
+                        (från fartygsdata) kopplas till senare positioner.
+  APRS ................ amatörradio på 144,800 MHz (AFSK 1200 bit/s, AX.25).
+                        Visar anropssignal, väg (digipeaters), position
+                        (vanlig, komprimerad och Mic-E), status, meddelanden,
+                        objekt och väder. Inställd NFM-frekvens på 144–146 MHz
+                        bevakas också.
+  ACARS ............... flygplansmeddelanden (AM/MSK 2400 bit/s) på 129–137 MHz.
+                        Alla kända ACARS-kanaler inom fönstret (ca 1,2 MHz)
+                        bevakas samtidigt. Tryck "Gå till ACARS-kanalerna".
+                        Bara meddelanden med korrekt kontrollsumma (CRC) visas.
+                        Dubbelklicka på ett meddelande för alla detaljer och
+                        "Visa på karta" (öppnar OpenStreetMap) när det finns
+                        en position.
+                        Sparas också i ~/.local/state/radiospanaren/avkodat.jsonl
+  Signalloggen känner igen kända signaltyper på frekvensen, t.ex. ACARS, VDL2,
+  AIS, APRS, ADS-B, nödfrekvenserna 121,5/243,0, PMR446, vädersatelliter,
+  FT8, UVB-76, militärflyg UHF och Rakel/TETRA. Övertoner av dongelns kristall
+  (28,8 MHz × k) märks som "Trolig störning".
+  Paket som är svagare än ca 8–10 dB över bruset går oftast inte att avkoda –
+  en bättre/högre antenn (utomhus) ger störst förbättring.
+  Krypterad trafik (t.ex. Rakel/TETRA och det mesta militära) kan inte avkodas.
+  Militärflyg på 225–400 MHz är AM-tal som du lyssnar på med läget AM.
+
+ Inspelning
+  "● Spela in" i titelraden spelar in ljudet som WAV.
+  "Spela in automatiskt vid signal" sparar en fil varje gång squelch öppnar.
+  IQ-inspelning sparar råa samples (.cu8, 1 536 000 S/s, ca 3 MB/s) som
+  kan öppnas i andra SDR-program.
+  Filerna hamnar i ~/Musik/Radiospanaren (eller ~/Radiospanaren).
+
+ Webbgränssnitt
+  Aktivera i sidopanelen eller med --webb. Öppna sedan
+      http://127.0.0.1:8073/
+  i en webbläsare: vattenfall, klicka för att ställa in, välj modulering
+  och tryck "Lyssna". Med "Tillåt andra datorer i nätverket" kan andra på
+  samma nätverk ansluta via http://<datorns-ip>:8073/ – slå bara på det i
+  ett nätverk du litar på (ingen inloggning finns).
+
+
+──────────────────────────────────────────────────────────────────────
+ 3. INSTALLERA PÅ EN ANNAN DATOR
+──────────────────────────────────────────────────────────────────────
+  Kräver GTK 4.12+ och libadwaita 1.5+, dvs. Fedora 40+, Ubuntu 24.04+,
+  Linux Mint 22+ eller Debian 13+. (Ubuntu 22.04 / Mint 21 är för gamla.)
+
+    tar xzf radiospanaren-1.1.0.tar.gz
+    cd radiospanaren-1.1.0
+    ./installera.sh
+
+  Skriptet installerar saknade paket (apt eller dnf, frågar först),
+  kopierar programmet, skapar genvägar i programmenyn och på skrivbordet,
+  kontrollerar SDR-drivrutinen och kör ett självtest.
+    ./installera.sh --avinstallera          ta bort programmet
+    ./installera.sh --avinstallera --allt   ... även inställningar och loggar
+  Installationsskriptet finns också i ~/.local/share/radiospanaren/.
+
+
+──────────────────────────────────────────────────────────────────────
+ 4. FILER
+──────────────────────────────────────────────────────────────────────
+  ~/.local/share/radiospanaren/radiospanaren.py   programmet
+  ~/.local/share/radiospanaren/avkodare.py        avkodare och signalidentifiering
+  ~/.local/share/radiospanaren/MANUAL.txt         den här manualen
+  ~/.local/bin/radiospanaren                      startkommandot
+  ~/.config/radiospanaren/config.json             inställningar, bokmärken
+  ~/.config/radiospanaren/style.css               egen stil (valfri, se nedan)
+  ~/.local/state/radiospanaren/radiospanaren.log  logg (fel, händelser)
+  ~/.local/state/radiospanaren/stderr.log         felutskrifter från GTK m.m.
+  ~/.local/state/radiospanaren/felrapport.txt     senaste felrapporten
+
+ Ändra utseendet
+  Skapa ~/.config/radiospanaren/style.css med GTK-CSS, t.ex.:
+      .freq-entry { color: #ffb000; font-size: 20pt; }
+  Starta om programmet. Vattenfallets färgskala väljs i sidopanelen
+  (Visning → Färgskala).
+
+
+──────────────────────────────────────────────────────────────────────
+ 5. VANLIGA PROBLEM
+──────────────────────────────────────────────────────────────────────
+  "Ingen RTL-SDR hittades"
+      Kontrollera kabeln, kör  rtl_test  och  lsusb | grep -i rtl.
+  "Kunde inte öppna RTL-SDR"
+      Ett annat program (SDR++, WaveShark, rtl_tcp) använder dongeln.
+      Stäng det. Om DVB-drivrutinen är laddad:  sudo modprobe -r dvb_usb_rtl28xxu
+  Inget ljud
+      Kontrollera att squelch inte är för hög och att volymen > 0.
+      Ljudet går via PipeWire (pacat/pw-cat). Se  radiospanaren --fel
+  Fel frekvens / signalen ligger lite bredvid
+      Ställ in "Frekvenskorrigering (ppm)". Mät med  rtl_test -p
+  Vattenfallet är helt svart eller helt vitt
+      Tryck "Automatisk nivå" under Visning.
+  Hackigt ljud
+      Se Felsökning → Prestanda. Många "överskridanden" betyder att
+      datorn inte hinner med; stäng andra tunga program.
+  Något annat
+      Kör  radiospanaren --rapport  och klistra in resultatet i Claude Code.
