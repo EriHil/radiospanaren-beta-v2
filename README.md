@@ -73,8 +73,8 @@ Bara meddelanden med korrekt kontrollsumma (CRC) visas. Positioner kan öppnas p
 ## Installation
 
 ```bash
-git clone https://github.com/EriHil/radiospanaren-beta-v1.git
-cd radiospanaren-beta-v1
+git clone https://github.com/EriHil/radiospanaren-beta-v2.git
+cd radiospanaren-beta-v2
 ./installera.sh
 ```
 
@@ -134,7 +134,7 @@ Testat på Fedora 45 (KDE) med en Nooelec NESDR SMArt v5 (R820T) och i en ren Ub
 
 ## Felrapporter
 
-Kör `radiospanaren --rapport` eller tryck **Felsökning → Kopiera felrapport** i programmet. Rapporten innehåller systeminformation och de senaste loggraderna. Klistra in den i en [issue](https://github.com/EriHil/radiospanaren-beta-v1/issues).
+Kör `radiospanaren --rapport` eller tryck **Felsökning → Kopiera felrapport** i programmet. Rapporten innehåller systeminformation och de senaste loggraderna. Klistra in den i en [issue](https://github.com/EriHil/radiospanaren-beta-v2/issues).
 
 ## Licens
 

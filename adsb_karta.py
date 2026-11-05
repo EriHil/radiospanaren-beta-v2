@@ -323,7 +323,7 @@ def run_gui(args):
             if Shumate is not None:
                 if hasattr(Shumate, "set_user_agent"):
                     Shumate.set_user_agent(f"Radiospanaren-Flygradar/{R.VERSION} "
-                                           "(+https://github.com/EriHil/radiospanaren-beta-v1)")
+                                           "(+https://github.com/EriHil/radiospanaren-beta-v2)")
                 self.smap = Shumate.SimpleMap(vexpand=True, hexpand=True)
                 reg = Shumate.MapSourceRegistry.new_with_defaults()
                 self.smap.set_map_source(reg.get_by_id(Shumate.MAP_SOURCE_OSM_MAPNIK))
