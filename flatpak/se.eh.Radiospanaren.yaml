@@ -1,0 +1,115 @@
+# Flatpak-manifest för Radiospanaren.
+#
+# Bygg (kräver flatpak-builder och GNOME 48-körtiden):
+#   flatpak install flathub org.flatpak.Builder org.gnome.Platform//48 org.gnome.Sdk//48
+#   flatpak run org.flatpak.Builder --user --install --force-clean build-dir \
+#       flatpak/se.eh.Radiospanaren.yaml
+#   flatpak run se.eh.Radiospanaren
+#
+# Appen får rå USB-åtkomst (--device=all) för RTL-SDR och ljud via PulseAudio/PipeWire.
+app-id: se.eh.Radiospanaren
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+command: radiospanaren
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --share=network          # OSM-kartrutor, rtl_tcp och webbgränssnittet
+  - --device=all             # rå USB-åtkomst till RTL-SDR-dongeln
+  - --filesystem=xdg-music:create   # inspelningar hamnar i ~/Musik/Radiospanaren
+  - --env=PYTHONPATH=/app/lib/python3.12/site-packages
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/cmake
+  - /share/man
+  - /share/gtk-doc
+  - '*.a'
+  - '*.la'
+
+modules:
+  # ── libusb (utvecklingsfiler saknas i SDK:n) ──
+  - name: libusb
+    buildsystem: autotools
+    config-opts:
+      - --disable-udev
+      - --disable-static
+    sources:
+      - type: archive
+        url: https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.tar.bz2
+        sha256: ffaa41d741a8a3bee244ac8e54a72ea05bf2879663c098c82fc5757853441575
+
+  # ── RTL-SDR-biblioteket (librtlsdr.so) ──
+  - name: librtlsdr
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DDETACH_KERNEL_DRIVER=ON
+      - -DINSTALL_UDEV_RULES=OFF
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: archive
+        url: https://github.com/osmocom/rtl-sdr/archive/refs/tags/v2.0.2.tar.gz
+        sha256: d69943eb32df742bc38a00ce6615e41250fd57851174e5ff916ec31e9e9e68e9
+
+  # ── Kartbiblioteket (bara rasterkartor, ingen vektormotor → inga extra beroenden) ──
+  - name: libshumate
+    buildsystem: meson
+    config-opts:
+      - -Dvector_renderer=false
+      - -Dgtk_doc=false
+      - -Dvapi=false
+      - -Dgir=true
+      - -Ddemos=false
+    sources:
+      - type: archive
+        url: https://download.gnome.org/sources/libshumate/1.4/libshumate-1.4.0.tar.xz
+        sha256: 3984368e0259862b3810d1ddc86d2dadd6d372a2b32376ccf4aff7c2e48c6d30
+
+  # ── numpy och scipy (färdiga hjul, ingen kompilering) ──
+  - name: python-deps
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-index --no-build-isolation --prefix=${FLATPAK_DEST}
+        numpy-2.2.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+        scipy-1.15.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/02/e2/e2cbb8d634151aab9528ef7b8bab52ee4ab10e076509285602c2a3a686e0/numpy-2.2.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+        sha256: 4f92084defa704deadd4e0a5ab1dc52d8ac9e8a8ef617f3fbb853e79b0ea3592
+      - type: file
+        url: https://files.pythonhosted.org/packages/0b/1f/03f52c282437a168ee2c7c14a1a0d0781a9a4a8962d84ac05c06b4c5b555/scipy-1.15.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+        sha256: 271e3713e645149ea5ea3e97b57fdab61ce61333f97cfae392c28ba786f9bb49
+
+  # ── Själva Radiospanaren ──
+  - name: radiospanaren
+    buildsystem: simple
+    build-commands:
+      - install -d /app/share/radiospanaren
+      - install -m644 radiospanaren.py avkodare.py adsb.py adsb_karta.py kartvy.py aktivitet.py
+        MANUAL.txt /app/share/radiospanaren/
+      - |
+        cat > /app/bin/radiospanaren <<'EOF'
+        #!/bin/sh
+        exec python3 /app/share/radiospanaren/radiospanaren.py "$@"
+        EOF
+        chmod 755 /app/bin/radiospanaren
+      - |
+        cat > /app/bin/flygradar <<'EOF'
+        #!/bin/sh
+        exec python3 /app/share/radiospanaren/adsb_karta.py "$@"
+        EOF
+        chmod 755 /app/bin/flygradar
+      - install -Dm644 se.eh.Radiospanaren.svg
+        /app/share/icons/hicolor/scalable/apps/se.eh.Radiospanaren.svg
+      - install -Dm644 flatpak/se.eh.Radiospanaren.desktop
+        /app/share/applications/se.eh.Radiospanaren.desktop
+      - install -Dm644 flatpak/se.eh.Radiospanaren.metainfo.xml
+        /app/share/metainfo/se.eh.Radiospanaren.metainfo.xml
+    sources:
+      - type: dir
+        path: ..

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>se.eh.Radiospanaren</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Radiospanaren</name>
+  <summary>SDR-mottagare, radioskanner, signallogg, avkodare och kartor</summary>
+  <description>
+    <p>
+      Radiospanaren gör en RTL-SDR-dongel till en komplett mottagarstation med
+      grafiskt gränssnitt, på svenska. Programmet kombinerar spektrum och
+      vattenfall, demodulering (WFM, NFM, AM, USB, LSB, CW), en radioskanner och
+      en signallogg med filter.
+    </p>
+    <p>Det kan också avkoda och visa flera signaltyper:</p>
+    <ul>
+      <li>ACARS – flygplansmeddelanden (129–137 MHz)</li>
+      <li>AIS – fartyg på en karta, med typ, fart, kurs och destination</li>
+      <li>APRS – amatörradiopositioner och meddelanden (144,800 MHz)</li>
+      <li>ADS-B – flygplan på en karta i realtid (Flygradar, 1090 MHz)</li>
+      <li>Aktivitetskarta – värmekarta över hur upptaget ett band är</li>
+    </ul>
+    <p>
+      HF tas emot via direktsampling. Utan dongel finns en inbyggd simulator för
+      att prova funktionerna. En kalibreringsfunktion mäter och sätter
+      frekvenskorrigeringen mot en känd sändare.
+    </p>
+  </description>
+  <launchable type="desktop-id">se.eh.Radiospanaren.desktop</launchable>
+  <provides>
+    <binary>radiospanaren</binary>
+    <binary>flygradar</binary>
+  </provides>
+  <categories>
+    <category>AudioVideo</category>
+    <category>HamRadio</category>
+  </categories>
+  <url type="homepage">https://github.com/EriHil/radiospanaren-beta-v2</url>
+  <url type="bugtracker">https://github.com/EriHil/radiospanaren-beta-v2/issues</url>
+  <developer id="se.eh">
+    <name>erihil</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="2.0.0" date="2026-11-05">
+      <description>
+        <p>Beta v2: AIS, ADS-B (Flygradar), fartygskarta, aktivitetskarta och
+           frekvenskalibrering.</p>
+      </description>
+    </release>
+  </releases>
+</component>

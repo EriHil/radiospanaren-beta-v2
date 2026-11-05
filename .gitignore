@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 *.cu8
 *.wav
+.flatpak-builder/
+build-dir/

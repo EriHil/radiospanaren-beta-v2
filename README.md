@@ -88,6 +88,17 @@ Skriptet gör följande:
 
 Avinstallera med `./installera.sh --avinstallera`.
 
+### Flatpak (alla distributioner)
+
+För distributioner där systemets GTK är för gammalt (t.ex. äldre Ubuntu/Debian/Mint)
+finns ett Flatpak-paket som tar med egna bibliotek. Se [flatpak/README.md](flatpak/README.md):
+
+```bash
+flatpak install flathub org.flatpak.Builder org.gnome.Platform//48 org.gnome.Sdk//48
+flatpak run org.flatpak.Builder --user --install --force-clean build-dir flatpak/se.eh.Radiospanaren.yaml
+flatpak run se.eh.Radiospanaren
+```
+
 ## Kom igång
 
 ```bash
@@ -114,7 +125,7 @@ Hela manualen, med alla kommandon, filtersyntax, mus och tangenter, filer och va
 
 ## Status och kända begränsningar
 
-Testat på Fedora 45 (KDE) med en Nooelec NESDR SMArt v5 (R820T) och i rena Ubuntu 24.04- och Debian 13-miljöer (samma bas som Linux Mint 22 respektive Debian stable).
+Testat på Fedora 45 (KDE) med en Nooelec NESDR SMArt v5 (R820T) och i rena Ubuntu 24.04- och Debian 13-miljöer (samma bas som Linux Mint 22 respektive Debian stable). Flatpak-paketet är byggt och verifierat (karta, avkodare och självtest).
 
 | Del | Status |
 |---|---|

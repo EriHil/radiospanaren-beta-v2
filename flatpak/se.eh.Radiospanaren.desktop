@@ -1,0 +1,21 @@
+[Desktop Entry]
+Type=Application
+Name=Radiospanaren
+GenericName=SDR-mottagare och radioskanner
+Comment=Spektrum, vattenfall, skanner, signallogg, avkodare och kartor för RTL-SDR
+Exec=radiospanaren
+Icon=se.eh.Radiospanaren
+Terminal=false
+Categories=AudioVideo;HamRadio;
+Keywords=SDR;RTL-SDR;radio;skanner;scanner;vattenfall;ACARS;AIS;ADS-B;APRS;
+StartupNotify=true
+StartupWMClass=se.eh.Radiospanaren
+Actions=Flygradar;Simulator;
+
+[Desktop Action Flygradar]
+Name=Flygradar (ADS-B med karta)
+Exec=flygradar
+
+[Desktop Action Simulator]
+Name=Starta med simulator (utan SDR)
+Exec=radiospanaren --simulator --start

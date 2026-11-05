@@ -2,6 +2,9 @@
 
 ## Efter 2.0.0 (opublicerat)
 
+- **Flatpak-paketering** (`flatpak/`): kör på valfri distribution oavsett systemets GTK-version, med egna bibliotek (GTK4, libadwaita, libshumate, librtlsdr, numpy, scipy). Byggt och verifierat mot GNOME 48-körtiden.
+- Verifierat att programmen kör på Debian 13 (trixie).
+
 - **Frekvenskalibrering**: "Kalibrera frekvens (ppm) …" i Mottagare (eller `--kalibrera`) mäter dongelns frekvensfel mot en känd bärvåg (t.ex. tidssignalen RWM) och sätter ppm automatiskt.
 - Rättat: loggraden "Mottagning startad" visade dongelns mittfrekvens i stället för den inställda frekvensen.
 
