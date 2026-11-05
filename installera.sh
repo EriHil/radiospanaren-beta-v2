@@ -50,7 +50,8 @@ fraga() {  # fraga "text" → 0 om ja
 # ── Avinstallation ──────────────────────────────────────────────────
 if [ "$AVINSTALLERA" = 1 ]; then
   rm -rf "$DEST"
-  rm -f "$BIN/radiospanaren" "$APPS/$APP_ID.desktop" "$ICONS/$APP_ID.svg" "$DESKTOP_DIR/Radiospanaren.desktop"
+  rm -f "$BIN/radiospanaren" "$BIN/flygradar" "$APPS/$APP_ID.desktop" "$APPS/$APP_ID.Flygradar.desktop" \
+        "$ICONS/$APP_ID.svg" "$DESKTOP_DIR/Radiospanaren.desktop"
   if [ "$ALLT" = 1 ]; then rm -rf "$CONF" "$STATE"; echo "Inställningar och loggar borttagna."; fi
   command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" 2>/dev/null || true
   gron "Radiospanaren är avinstallerad."
@@ -65,17 +66,18 @@ echo "═══ Installerar Radiospanaren ═══"
 DIST="${ID:-okänd} ${ID_LIKE:-}"
 SAKNAS=()
 if [[ "$DIST" =~ (fedora|rhel|centos) ]]; then
-  PKGS=(python3 python3-gobject python3-cairo gtk4 libadwaita python3-numpy python3-scipy rtl-sdr pulseaudio-utils)
+  PKGS=(python3 python3-gobject python3-cairo gtk4 libadwaita libshumate python3-numpy python3-scipy rtl-sdr
+        pulseaudio-utils)
   for p in "${PKGS[@]}"; do rpm -q "$p" >/dev/null 2>&1 || SAKNAS+=("$p"); done
   INSTALL=($SUDO dnf install -y)
 elif [[ "$DIST" =~ (debian|ubuntu|linuxmint) ]]; then
-  PKGS=(python3 python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 python3-numpy python3-scipy
+  PKGS=(python3 python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-shumate-1.0 python3-numpy python3-scipy
         rtl-sdr pulseaudio-utils xdg-user-dirs)
   for p in "${PKGS[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || SAKNAS+=("$p"); done
   INSTALL=($SUDO apt-get install -y)
 else
   gul "Okänd distribution ($DIST). Installera själv: Python 3, PyGObject med GTK 4.12+ och libadwaita 1.5+,"
-  gul "pycairo, numpy, scipy, rtl-sdr (librtlsdr) och pacat (pulseaudio-utils)."
+  gul "pycairo, numpy, scipy, rtl-sdr (librtlsdr), pacat (pulseaudio-utils) och libshumate (karta i Flygradar)."
   UTAN_PAKET=1
 fi
 
@@ -115,7 +117,8 @@ fi
 # ── 3. Programfiler ─────────────────────────────────────────────────
 mkdir -p "$DEST" "$BIN" "$APPS" "$ICONS" "$STATE"
 install -m 755 "$SRC/radiospanaren.py" "$DEST/radiospanaren.py"
-install -m 644 "$SRC/avkodare.py" "$SRC/MANUAL.txt" "$DEST/"
+install -m 644 "$SRC/avkodare.py" "$SRC/adsb.py" "$SRC/MANUAL.txt" "$DEST/"
+install -m 755 "$SRC/adsb_karta.py" "$DEST/adsb_karta.py"
 install -m 755 "$SRC/installera.sh" "$DEST/installera.sh"
 install -m 644 "$SRC/$APP_ID.svg" "$ICONS/$APP_ID.svg"
 
@@ -132,6 +135,18 @@ esac
 exec python3 "$APP" "$@" 2>>"$STATE/stderr.log"
 EOF
 chmod 755 "$BIN/radiospanaren"
+cat > "$BIN/flygradar" <<'FLYG'
+#!/bin/sh
+# Startskript för Flygradar (ADS-B med karta), del av Radiospanaren.
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/radiospanaren"
+mkdir -p "$STATE"
+APP="${XDG_DATA_HOME:-$HOME/.local/share}/radiospanaren/adsb_karta.py"
+case " $* " in
+  *" --help "*|*" -h "*|*" --version "*|*" --sjalvtest "*|*" --debug "*) exec python3 "$APP" "$@" ;;
+esac
+exec python3 "$APP" "$@" 2>>"$STATE/stderr.log"
+FLYG
+chmod 755 "$BIN/flygradar"
 
 # ── 4. Programmeny och skrivbord ────────────────────────────────────
 cat > "$APPS/$APP_ID.desktop" <<EOF
@@ -147,7 +162,11 @@ Categories=AudioVideo;Audio;HamRadio;
 Keywords=SDR;RTL-SDR;radio;skanner;scanner;vattenfall;ACARS;AIS;APRS;
 StartupNotify=true
 StartupWMClass=$APP_ID
-Actions=Simulator;Manual;
+Actions=Flygradar;Simulator;Manual;
+
+[Desktop Action Flygradar]
+Name=Flygradar (ADS-B med karta)
+Exec=$BIN/flygradar
 
 [Desktop Action Simulator]
 Name=Starta med simulator (utan SDR)
@@ -158,6 +177,26 @@ Name=Visa manualen
 Exec=xdg-open $DEST/MANUAL.txt
 EOF
 chmod 755 "$APPS/$APP_ID.desktop"
+cat > "$APPS/$APP_ID.Flygradar.desktop" <<FLYGDESK
+[Desktop Entry]
+Type=Application
+Name=Flygradar
+GenericName=ADS-B-mottagare med karta
+Comment=Visar flygplan i närheten på en karta (ADS-B, 1090 MHz) – del av Radiospanaren
+Exec=$BIN/flygradar
+Icon=$APP_ID
+Terminal=false
+Categories=AudioVideo;HamRadio;
+Keywords=ADS-B;flygplan;radar;1090;karta;RTL-SDR;
+StartupNotify=true
+StartupWMClass=$APP_ID.Flygradar
+Actions=Simulator;
+
+[Desktop Action Simulator]
+Name=Starta med simulator (utan SDR)
+Exec=$BIN/flygradar --simulator --start
+FLYGDESK
+chmod 755 "$APPS/$APP_ID.Flygradar.desktop"
 if [ -d "$DESKTOP_DIR" ]; then
   cp "$APPS/$APP_ID.desktop" "$DESKTOP_DIR/Radiospanaren.desktop"
   chmod 755 "$DESKTOP_DIR/Radiospanaren.desktop"
@@ -196,4 +235,5 @@ if "$BIN/radiospanaren" --sjalvtest | tail -6; then :; fi
 case ":$PATH:" in *":$BIN:"*) ;; *) gul "Obs: $BIN finns inte i PATH ännu – logga ut och in, så fungerar kommandot radiospanaren i terminalen.";; esac
 echo
 gron "Klart! Starta Radiospanaren från programmenyn eller skrivbordet, eller skriv: radiospanaren"
+echo "Flygradar (ADS-B med karta): flygradar  – eller knappen i Radiospanaren (sidopanelen → Avkodare)"
 echo "Manual: radiospanaren --manual    Felrapport: radiospanaren --rapport"

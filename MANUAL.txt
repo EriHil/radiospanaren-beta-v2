@@ -1,5 +1,5 @@
 ══════════════════════════════════════════════════════════════════════
-  RADIOSPANAREN – MANUAL                                   version 1.1.0
+  RADIOSPANAREN – MANUAL                                   version 1.2.0
   SDR-mottagare, radioskanner och signallogg för Fedora
 ══════════════════════════════════════════════════════════════════════
 
@@ -73,6 +73,18 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
                                     (gamla sparas som config.json.bak)
   radiospanaren --manual            Visa den här manualen
   radiospanaren --version           Visa version
+
+ Flygradar (ADS-B med karta) – eget program
+ ──────────────────────────────────────────
+  flygradar                         Starta Flygradar
+  flygradar --start                 Starta och börja ta emot direkt
+  flygradar --simulator --start     Prova med simulerade flygplan
+  flygradar --tcp VÄRD:PORT         Använd en rtl_tcp-server
+  flygradar --forstarkning 40       Annan förstärkning (standard 49,6 dB)
+  flygradar --sjalvtest             Testa ADS-B-avkodaren (utan fönster)
+  flygradar --skarmbild FIL 10      Spara en skärmbild efter 10 s
+  Flygradar kan också startas med knappen "✈ Öppna Flygradar" i
+  Radiospanaren (sidopanelen → Avkodare) eller från programmenyn.
   radiospanaren --help              Kort lista över alla flaggor
 
  Få hjälp av Claude Code
@@ -163,6 +175,20 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   En lång trådantenn behövs för bra HF-mottagning; teleskopantennen räcker
   oftast bara till starka signaler.
 
+ Flygradar (ADS-B, 1090 MHz)
+  Eget fönster med OpenStreetMap-karta och tabell över flygplanen i närheten:
+  ICAO-adress, anropssignal, höjd, fart, kurs, stig/sjunk, squawk, position.
+  Flygplanen ritas i kursriktningen med färg efter höjd (orange = lågt,
+  blått = högt) och ett spår efter sig. Klicka i tabellen för att visa
+  flygplanet på kartan, dubbelklicka för att öppna OpenStreetMap.
+  Squawk 7500/7600/7700 (kapning/radiofel/nödläge) visas i rött med en varning.
+  Knappen "ft" byter mellan fot och meter, "Visa alla" zoomar till alla plan.
+  Dongeln kan bara användas av ett program åt gången: när Flygradar startas
+  från Radiospanaren stoppas mottagningen där först.
+  Kartan kräver libshumate. Saknas den visas en enkel radarvy och knappen
+  "Installera kartan" (frågar efter ditt lösenord och startar sedan om).
+  Kartrutorna hämtas från OpenStreetMap och kräver internet.
+
  Avkodare (sidopanelen → Avkodare, fliken "Avkodat")
   Mottagarfönstret är ca 1,2 MHz brett, så det går att avkoda ett band i taget:
   tryck "Gå till ACARS/AIS/APRS" (slår också på avkodaren).
@@ -215,8 +241,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   Kräver GTK 4.12+ och libadwaita 1.5+, dvs. Fedora 40+, Ubuntu 24.04+,
   Linux Mint 22+ eller Debian 13+. (Ubuntu 22.04 / Mint 21 är för gamla.)
 
-    tar xzf radiospanaren-1.1.0.tar.gz
-    cd radiospanaren-1.1.0
+    tar xzf radiospanaren-1.2.0.tar.gz
+    cd radiospanaren-1.2.0
     ./installera.sh
 
   Skriptet installerar saknade paket (apt eller dnf, frågar först),
@@ -232,6 +258,10 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
 ──────────────────────────────────────────────────────────────────────
   ~/.local/share/radiospanaren/radiospanaren.py   programmet
   ~/.local/share/radiospanaren/avkodare.py        avkodare och signalidentifiering
+  ~/.local/share/radiospanaren/adsb.py            ADS-B-avkodare
+  ~/.local/share/radiospanaren/adsb_karta.py      Flygradar (eget program)
+  ~/.local/bin/flygradar                          startkommando för Flygradar
+  ~/.config/radiospanaren/flygradar.json          Flygradars inställningar
   ~/.local/share/radiospanaren/MANUAL.txt         den här manualen
   ~/.local/bin/radiospanaren                      startkommandot
   ~/.config/radiospanaren/config.json             inställningar, bokmärken

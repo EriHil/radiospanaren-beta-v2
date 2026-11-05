@@ -1,5 +1,20 @@
 # Ändringslogg
 
+## 1.2.0 (2026-11-05)
+
+### Nytt: Flygradar (ADS-B)
+- Eget program, `adsb_karta.py` / `flygradar`, med OpenStreetMap-karta (libshumate) och flygplanstabell.
+- ADS-B/Mode S-avkodare (`adsb.py`): DF17/18, DF11 och DF4/5/20/21, CRC-24 med rättning av enstaka bitfel, och CPR-positioner.
+- Startas med knappen "✈ Öppna Flygradar" i Radiospanaren, som först släpper dongeln. Finns också i programmenyn.
+- Varning för squawk 7500, 7600 och 7700. Visar höjd i fot eller meter.
+- Saknas kartan visas en enkel radarvy och knappen "Installera kartan" (pkexec med bekräftelse).
+- Installationsskriptet installerar kartan (libshumate / gir1.2-shumate-1.0) automatiskt.
+
+### Rättat
+- Stängning vid SIGTERM fungerar på både ny GLib (GLibUnix) och äldre (Ubuntu 24.04 / Mint 22).
+- Kompatibel med libshumate 1.2 (Ubuntu 24.04 / Mint 22).
+- RTL-SDR- och rtl_tcp-källorna har valbar samplingstakt.
+
 ## 1.1.0 – "beta v1" (2026-11-05)
 
 Första publicerade versionen.

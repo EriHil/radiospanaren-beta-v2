@@ -28,7 +28,7 @@ import threading
 
 APP_NAME = "Radiospanaren"
 APP_ID = "se.eh.Radiospanaren"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "radiospanaren")
@@ -439,9 +439,11 @@ class RtlSource(BaseSource):
     kind = "rtl"
     name = "RTL-SDR"
 
-    def __init__(self, index=0):
+    def __init__(self, index=0, rate=SR, block=BLOCK):
         super().__init__()
         self.index = index
+        self.rate = int(rate)
+        self.block = int(block)
         self.dev = None
         libname = ctypes.util.find_library("rtlsdr") or "librtlsdr.so.2"
         try:
@@ -481,11 +483,11 @@ class RtlSource(BaseSource):
             raise SourceError(f"Kunde inte öppna RTL-SDR (felkod {r}). Används den av ett annat program "
                               f"(t.ex. SDR++ eller WaveShark), eller är DVB-drivrutinen laddad?")
         log.info("Öppnade RTL-SDR: %s", name.decode(errors="replace") if name else "?")
-        L.rtlsdr_set_sample_rate(self.dev, SR)
+        L.rtlsdr_set_sample_rate(self.dev, self.rate)
         L.rtlsdr_set_center_freq(self.dev, int(self.center))
         self._apply(self._take())
         L.rtlsdr_reset_buffer(self.dev)
-        self.buf = (ctypes.c_ubyte * (BLOCK * 2))()
+        self.buf = (ctypes.c_ubyte * (self.block * 2))()
         self.arr = np.ctypeslib.as_array(self.buf)
 
     def _apply(self, p):
@@ -514,10 +516,10 @@ class RtlSource(BaseSource):
         if p:
             self._apply(p)
         n = ctypes.c_int(0)
-        r = self.lib.rtlsdr_read_sync(self.dev, self.buf, BLOCK * 2, ctypes.byref(n))
+        r = self.lib.rtlsdr_read_sync(self.dev, self.buf, self.block * 2, ctypes.byref(n))
         if r < 0:
             raise SourceError(f"Läsfel från RTL-SDR (felkod {r}). Drogs dongeln ur?")
-        if n.value < BLOCK * 2:
+        if n.value < self.block * 2:
             return None
         return LUT_U8[self.arr].view(np.complex64), self.center, self.arr
 
@@ -533,14 +535,15 @@ class TcpSource(BaseSource):
     kind = "tcp"
     name = "rtl_tcp"
 
-    def __init__(self, addr):
+    def __init__(self, addr, rate=SR, block=BLOCK):
         super().__init__()
+        self.rate = int(rate)
         host, _, port = addr.strip().rpartition(":")
         if not host:
             host, port = addr.strip(), "1234"
         self.host, self.port = host, int(port)
         self.sock = None
-        self.buf = bytearray(BLOCK * 2)
+        self.buf = bytearray(int(block) * 2)
 
     def _cmd(self, c, v):
         self.sock.sendall(struct.pack(">BI", c, int(v) & 0xFFFFFFFF))
@@ -554,7 +557,7 @@ class TcpSource(BaseSource):
         if hdr[:4] != b"RTL0":
             raise SourceError(f"{self.host}:{self.port} svarar inte som en rtl_tcp-server")
         log.info("Ansluten till rtl_tcp %s:%d", self.host, self.port)
-        self._cmd(2, SR)
+        self._cmd(2, self.rate)
         self._cmd(1, self.center)
         self._apply(self._take())
 
@@ -1421,6 +1424,24 @@ class WebServer:
 # ════════════════════════════════════════════════════════════════════
 # 7. GRAFISKT GRÄNSSNITT
 # ════════════════════════════════════════════════════════════════════
+def on_unix_signals(cb):
+    """Anropar cb vid SIGTERM/SIGINT i GTK:s huvudloop (GLibUnix i ny PyGObject, annars GLib)."""
+    import signal
+    from gi.repository import GLib
+    add = None
+    try:
+        import gi
+        gi.require_version("GLibUnix", "2.0")
+        from gi.repository import GLibUnix
+        add = getattr(GLibUnix, "signal_add", None)       # GLib 2.84+ (t.ex. Fedora 42+)
+    except (ImportError, ValueError):
+        pass
+    if add is None:
+        add = GLib.unix_signal_add                          # äldre GLib (Ubuntu 24.04, Mint 22)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        add(GLib.PRIORITY_DEFAULT, sig, lambda *_: cb() or False)
+
+
 MIN_GTK = (4, 12)
 MIN_ADW = (1, 5)
 
@@ -2293,6 +2314,7 @@ def run_gui(args):
             self._button(g, "Gå till ACARS (131,7 MHz)", lambda: self._goto_decoder("ACARS"))
             self._button(g, "Gå till AIS (162 MHz)", lambda: self._goto_decoder("AIS"))
             self._button(g, "Gå till APRS (144,800 MHz)", lambda: self._goto_decoder("APRS"))
+            self._button(g, "✈ Öppna Flygradar (ADS-B, 1090 MHz)", self._open_radar)
             box.append(g)
 
             g = self._section("Inspelning", f"Sparas i {rec_dir()}")
@@ -2874,6 +2896,33 @@ def run_gui(args):
             if v and abs(self.engine.center - f) > SR * 0.44:
                 self.toast(f"{kind} ligger utanför fönstret – tryck \"Gå till {kind}\"")
 
+        def _open_radar(self):
+            """Startar Flygradar (adsb_karta.py) som eget program. Dongeln kan bara användas av ett program."""
+            path = os.path.join(APP_DIR, "adsb_karta.py")
+            if not os.path.exists(path):
+                self.toast("Hittar inte adsb_karta.py – installera om programmet")
+                log.error("Saknar %s", path)
+                return
+            src = self.conf["source"]
+            if self.engine.running:
+                if src in ("rtl",):
+                    self.btn_start.set_active(False)       # släpp dongeln
+                    self.toast("Mottagningen stoppad – Flygradar använder dongeln")
+            cmd = [sys.executable, path, "--kalla", src, "--start"]
+            if src == "tcp":
+                cmd += ["--tcp", self.conf["tcp_addr"]]
+
+            def launch():
+                try:
+                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=open(STDERR_FILE, "ab"),
+                                     start_new_session=True)
+                    log.info("Startade Flygradar: %s", " ".join(cmd))
+                except OSError as ex:
+                    log.error("Kunde inte starta Flygradar: %s", ex)
+                    self.toast(f"Kunde inte starta Flygradar: {ex}")
+                return False
+            GLib.timeout_add(700 if self.engine.running or self.engine.thread else 0, launch)
+
         def _goto_decoder(self, kind):
             f, m = self.DEC_TUNE[kind]
             if not self.hub.enabled[kind]:
@@ -3194,9 +3243,7 @@ def run_gui(args):
             win = MainWindow(self, conf, a)
             self.win = win
             win.present()
-            import signal
-            for sig in (signal.SIGTERM, signal.SIGINT):     # stäng snyggt (sparar inställningar, loggar)
-                GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, lambda *_: win.close() or False)
+            on_unix_signals(lambda: win.close())           # stäng snyggt (sparar inställningar, loggar)
             log.info("Fönstret öppnat")
 
     log.info("=== %s %s startar (Python %s) ===", APP_NAME, VERSION, sys.version.split()[0])
@@ -3288,7 +3335,13 @@ def selftest(seconds=4.0):
     ax = avkodare.parse_ax25(fr[0]) if fr else None
     aprs_ok = bool(ax and ax["src"] == "SA0ABC-9" and avkodare.parse_aprs(ax)[0] == "Position")
     print(f"  APRS-avkodare: {'OK' if aprs_ok else 'FEL'}")
-    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok
+    try:
+        import adsb
+        adsb_ok = adsb.selftest(verbose=True)
+    except Exception as ex:
+        print(f"  ADS-B-avkodare: FEL ({ex})")
+        adsb_ok = False
+    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok and adsb_ok
     print("RESULTAT: " + ("OK" if ok else f"FEL {errors}"))
     log.info("Självtest: %s (%d block, %.1f ms/block)", "OK" if ok else "FEL", st["blocks"], st["proc_ms"])
     return 0 if ok else 1
