@@ -939,7 +939,8 @@ class Engine:
         src = self.source
         try:
             src.open()
-            log.info("Mottagning startad (%s, %.3f MHz)", src.name, self.center / 1e6)
+            log.info("Mottagning startad (%s, inställd %.4f MHz, mitt %.4f MHz)", src.name,
+                     (self.center + self.offset) / 1e6, self.center / 1e6)
             while self.running:
                 r = src.read()
                 if r is None:
