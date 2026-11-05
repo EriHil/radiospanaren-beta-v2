@@ -42,6 +42,12 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.1.0" date="2026-11-05">
+      <description>
+        <p>Frekvenskalibrering, Flatpak-paket, verifierat på Debian 13. Rättat:
+           loggen visar inställd frekvens.</p>
+      </description>
+    </release>
     <release version="2.0.0" date="2026-11-05">
       <description>
         <p>Beta v2: AIS, ADS-B (Flygradar), fartygskarta, aktivitetskarta och

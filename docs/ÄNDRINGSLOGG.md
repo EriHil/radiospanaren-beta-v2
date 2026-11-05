@@ -1,6 +1,6 @@
 # Ändringslogg
 
-## Efter 2.0.0 (opublicerat)
+## 2.1.0 – "beta v2.1" (2026-11-05)
 
 - **Flatpak-paketering** (`flatpak/`): kör på valfri distribution oavsett systemets GTK-version, med egna bibliotek (GTK4, libadwaita, libshumate, librtlsdr, numpy, scipy). Byggt och verifierat mot GNOME 48-körtiden.
 - Verifierat att programmen kör på Debian 13 (trixie).
