@@ -1,5 +1,5 @@
 ══════════════════════════════════════════════════════════════════════
-  RADIOSPANAREN – MANUAL                                   version 1.3.0
+  RADIOSPANAREN – MANUAL                                   version 1.4.0
   SDR-mottagare, radioskanner och signallogg för Fedora
 ══════════════════════════════════════════════════════════════════════
 
@@ -35,6 +35,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   radiospanaren --aprs              Slå på APRS-avkodning (144,800 MHz)
   radiospanaren --flik avkodat      Visa fliken Avkodat (signallogg, bokmarken)
   radiospanaren --fartygskarta      Öppna fartygskartan (AIS) direkt
+  radiospanaren --aktivitetskarta   Öppna aktivitetskartan direkt
   radiospanaren --squelch -15       Squelchnivå i dB
   radiospanaren --webb              Starta webbgränssnittet (port 8073)
   radiospanaren --webb 9000         ... på en annan port
@@ -177,6 +178,19 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   En lång trådantenn behövs för bra HF-mottagning; teleskopantennen räcker
   oftast bara till starka signaler.
 
+ Aktivitetskarta (värmekarta över ett band)
+  Sidopanelen → Avkodare → "📊 Aktivitetskarta" öppnar ett fönster som sveper
+  ett valt band om och om igen och ritar en värmekarta: frekvens i sidled,
+  tid nedåt (nyaste överst) och färg efter signalnivå över brusgolvet.
+  Överst visas "upptagenhet" – hur stor andel av sveparna varje kanal var
+  aktiv – och listan "Mest aktiva kanaler" till höger rangordnar kanalerna.
+  Välj ett färdigt band eller skriv eget intervall (Från–Till MHz). Tröskeln
+  styr vad som räknas som aktivt, och färgskalan kan bytas. Klicka i kartan
+  eller på en rad för att ställa in mottagaren där (svepet pausas då).
+  Kräver att mottagningen är igång. Svepet och skannern kan inte köra
+  samtidigt. Bredare band tar längre tid per svep (ca 1,2 MHz åt gången).
+  WFM-rundradion 96–108 MHz räknas aldrig med (grått fält i kartan).
+
  Fartygskarta (AIS)
   Sidopanelen → Avkodare → "🚢 Visa fartyg på karta (AIS)" öppnar ett fönster med
   karta och tabell över fartygen som AIS-avkodaren hört: MMSI, namn, anrop,
@@ -256,8 +270,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   Kräver GTK 4.12+ och libadwaita 1.5+, dvs. Fedora 40+, Ubuntu 24.04+,
   Linux Mint 22+ eller Debian 13+. (Ubuntu 22.04 / Mint 21 är för gamla.)
 
-    tar xzf radiospanaren-1.3.0.tar.gz
-    cd radiospanaren-1.3.0
+    tar xzf radiospanaren-1.4.0.tar.gz
+    cd radiospanaren-1.4.0
     ./installera.sh
 
   Skriptet installerar saknade paket (apt eller dnf, frågar först),
@@ -275,6 +289,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   ~/.local/share/radiospanaren/avkodare.py        avkodare och signalidentifiering
   ~/.local/share/radiospanaren/adsb.py            ADS-B-avkodare
   ~/.local/share/radiospanaren/kartvy.py          gemensam kartvy (fartygskartan)
+  ~/.local/share/radiospanaren/aktivitet.py       aktivitetskartans bandsvep
   ~/.local/share/radiospanaren/adsb_karta.py      Flygradar (eget program)
   ~/.local/bin/flygradar                          startkommando för Flygradar
   ~/.config/radiospanaren/flygradar.json          Flygradars inställningar

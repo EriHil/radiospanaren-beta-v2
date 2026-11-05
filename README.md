@@ -39,6 +39,12 @@ Radiospanaren gör en billig RTL-SDR-dongel till en komplett mottagarstation med
 
 Bara meddelanden med korrekt kontrollsumma (CRC) visas. Positioner kan öppnas på OpenStreetMap.
 
+**Aktivitetskarta (värmekarta)**
+- Sveper ett valt band om och om igen och ritar en värmekarta över tid med signalnivå per kanal, plus en upptagenhetsremsa och en lista över de mest aktiva kanalerna.
+- Färdiga band eller eget intervall, valbar tröskel och färgskala. Klicka för att lyssna. WFM-rundradion 96–108 MHz utesluts.
+
+![Aktivitetskarta](docs/bilder/aktivitetskarta.png)
+
 **Fartygskarta (AIS)**
 - Visar fartygen som AIS-avkodaren hört på en OpenStreetMap-karta, med kursriktning, färg efter fartygstyp (även militära fartyg) och spår.
 - Tabell med MMSI, namn, anrop, typ, status, fart, kurs, position och destination. Varnar för AIS-nödsändare.
@@ -93,6 +99,7 @@ radiospanaren --mod AM --skanna intervall --intervall 118-137 --kanalsteg 25 --s
 radiospanaren --direktsampling q --frekvens 14.074 --mod USB --start         # HF, FT8 på 20 m
 flygradar --start                                      # flygplan på karta (ADS-B)
 radiospanaren --frekvens 161.975 --mod NFM --ais --start --fartygskarta   # fartyg på karta (AIS)
+radiospanaren --aktivitetskarta                        # värmekarta över ett band
 radiospanaren --sjalvtest                              # testa signalbehandling och avkodare
 radiospanaren --manual                                 # hela manualen
 ```
@@ -114,6 +121,7 @@ Testat på Fedora 45 (KDE) med en Nooelec NESDR SMArt v5 (R820T) och i en ren Ub
 | Spektrum, vattenfall, demodulering | Testat med riktiga signaler (VHF/UHF och HF) |
 | Skanner (bokmärken, intervall, störningsfilter) | Testat med riktiga signaler |
 | AIS-avkodare och fartygskarta | **Verifierad med riktiga fartyg.** Paket över cirka 9 dB SNR avkodas. Kartan är testad på Fedora 45 och Ubuntu 24.04. |
+| Aktivitetskarta | **Testad med riktiga signaler** (flygbandet). Sveper ett band och visar aktivitet per kanal över tid. |
 | ACARS-avkodare | Testad med syntetiska signaler enligt standarden. Ingen riktig trafik har kunnat tas emot ännu. |
 | APRS-avkodare | Testad med syntetiska signaler (klarar 7 dB SNR). Ingen riktig trafik har kunnat tas emot ännu. |
 | ADS-B / Flygradar | **Verifierad med riktiga flygplan** (inomhusantenn, Stockholmsområdet). Karta testad på Fedora 45 (libshumate 1.7) och Ubuntu 24.04 (1.2). |

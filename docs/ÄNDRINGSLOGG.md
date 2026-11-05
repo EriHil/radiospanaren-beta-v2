@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 1.4.0 (2026-11-05)
+
+### Nytt: Aktivitetskarta
+- Fönstret "Aktivitetskarta" (sidopanelen → Avkodare, eller `--aktivitetskarta`) sveper ett valt band och ritar en värmekarta: frekvens i sidled, tid nedåt, färg efter signalnivå över brusgolvet.
+- Upptagenhetsremsa (andel svep per kanal som var aktiv) och lista över de mest aktiva kanalerna; klicka för att lyssna.
+- Färdiga band eller eget intervall, valbar tröskel och färgskala. Ömsesidigt uteslutande med skannern.
+- WFM-rundradion 96–108 MHz räknas aldrig med och ritas grå.
+- Ny modul `aktivitet.py` (BandMonitor, bara numpy).
+
 ## 1.3.0 (2026-11-05)
 
 ### Nytt: Fartygskarta (AIS)

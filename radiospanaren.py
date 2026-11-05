@@ -28,7 +28,7 @@ import threading
 
 APP_NAME = "Radiospanaren"
 APP_ID = "se.eh.Radiospanaren"
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "radiospanaren")
@@ -2222,6 +2222,375 @@ def run_gui(args):
         d = max(0, time.time() - t)
         return f"{d:.0f} s" if d < 120 else f"{d / 60:.0f} min"
 
+    # ── Aktivitetskarta (värmekarta över ett band) ──
+    class ActivityView(Gtk.DrawingArea):
+        def __init__(self, win):
+            super().__init__(hexpand=True, vexpand=True)
+            self.win = win
+            self.mon = None
+            self.lut = make_lut(win.conf.get("act_colormap", "klassisk"))
+            self.dmax = 35.0
+            self.mouse = None
+            self.set_draw_func(self.on_draw)
+            g = Gtk.GestureClick(button=1)
+            g.connect("pressed", self._click)
+            self.add_controller(g)
+            mo = Gtk.EventControllerMotion()
+            mo.connect("motion", lambda c, x, y: (setattr(self, "mouse", (x, y)), self.queue_draw()))
+            mo.connect("leave", lambda c: (setattr(self, "mouse", None), self.queue_draw()))
+            self.add_controller(mo)
+
+        def layout(self, H):
+            occ_h, axis_h = 72, 20
+            return occ_h, axis_h, max(1, H - occ_h - axis_h)
+
+        def _x_to_freq(self, x, W):
+            m = self.mon
+            return m.lo + max(0.0, min(1.0, x / max(1, W))) * (m.hi - m.lo)
+
+        def _click(self, g, n, x, y):
+            if self.mon:
+                self.win.tune_to(self._x_to_freq(x, self.get_width()))
+
+        def on_draw(self, area, cr, W, H, *_):
+            cr.set_source_rgb(0.05, 0.06, 0.08)
+            cr.paint()
+            m = self.mon
+            if m is None or W < 20 or H < 60:
+                cr.set_source_rgba(1, 1, 1, 0.6)
+                cr.set_font_size(15)
+                msg = "Välj band och tryck ▶ Svep"
+                e = cr.text_extents(msg)
+                cr.move_to((W - e.width) / 2, H / 2)
+                cr.show_text(msg)
+                return
+            occ_h, axis_h, heat_h = self.layout(H)
+            heat_y = occ_h
+            arr, times = m.image()
+            occ = m.occupancy()
+            peak = m.peak_hold()
+
+            # ── värmekarta ──
+            if arr is not None and len(arr):
+                rows = arr.shape[0]
+                idx = np.clip(arr / self.dmax * 255.0, 0, 255).astype(np.uint8)
+                rgba = np.ascontiguousarray(self.lut[idx])
+                surf = cairo.ImageSurface.create_for_data(memoryview(rgba), cairo.FORMAT_ARGB32,
+                                                          m.ncols, rows, m.ncols * 4)
+                cr.save()
+                cr.rectangle(0, heat_y, W, heat_h)
+                cr.clip()
+                cr.translate(0, heat_y)
+                cr.scale(W / m.ncols, heat_h / rows)
+                cr.set_source_surface(surf, 0, 0)
+                cr.get_source().set_filter(cairo.FILTER_NEAREST)
+                cr.paint()
+                cr.restore()
+
+            # ── spärrade kanaler (t.ex. WFM 96–108 MHz) ──
+            if getattr(m, "excluded", None) is not None and m.excluded.any():
+                cr.set_source_rgba(0.5, 0.5, 0.5, 0.33)
+                col = 0
+                while col < m.ncols:
+                    if m.excluded[col]:
+                        c2 = col
+                        while c2 < m.ncols and m.excluded[c2]:
+                            c2 += 1
+                        x0 = col / m.ncols * W
+                        x1 = c2 / m.ncols * W
+                        cr.rectangle(x0, heat_y, x1 - x0, heat_h)
+                        cr.fill()
+                        cx = (x0 + x1) / 2
+                        if x1 - x0 > 60:
+                            cr.set_source_rgba(1, 1, 1, 0.6)
+                            cr.set_font_size(11)
+                            t = "utesluten (WFM)"
+                            e = cr.text_extents(t)
+                            cr.move_to(cx - e.width / 2, heat_y + heat_h / 2)
+                            cr.show_text(t)
+                            cr.set_source_rgba(0.5, 0.5, 0.5, 0.33)
+                        col = c2
+                    else:
+                        col += 1
+
+            # ── upptagenhetsremsa ──
+            cr.set_source_rgb(0.08, 0.09, 0.12)
+            cr.rectangle(0, 0, W, occ_h)
+            cr.fill()
+            cr.set_source_rgba(1, 1, 1, 0.5)
+            cr.set_font_size(10)
+            cr.move_to(4, 12)
+            cr.show_text("Upptagenhet")
+            base = occ_h - 3
+            for col in range(m.ncols):
+                o = occ[col]
+                if o <= 0:
+                    continue
+                x0 = col / m.ncols * W
+                x1 = (col + 1) / m.ncols * W
+                h = o * (occ_h - 16)
+                r, g, b = (0.3 + 0.7 * o, 0.8 - 0.6 * o, 0.2)
+                cr.set_source_rgb(r, g, b)
+                cr.rectangle(x0, base - h, max(1, x1 - x0), h)
+                cr.fill()
+            # topp-håll som ljus linje
+            cr.set_source_rgba(0.7, 0.85, 1, 0.5)
+            cr.set_line_width(1)
+            for col in range(0, m.ncols, max(1, m.ncols // W or 1)):
+                x = col / m.ncols * W
+                yy = base - min(1.0, peak[col] / self.dmax) * (occ_h - 16)
+                cr.line_to(x, yy)
+            cr.stroke()
+
+            # ── frekvensaxel + bandplan ──
+            ay = heat_y + heat_h
+            cr.set_source_rgb(0.09, 0.1, 0.13)
+            cr.rectangle(0, ay, W, axis_h)
+            cr.fill()
+            for blo, bhi, name in BANDPLAN:
+                x0 = (blo * 1e6 - m.lo) / (m.hi - m.lo) * W
+                x1 = (bhi * 1e6 - m.lo) / (m.hi - m.lo) * W
+                if x1 < 0 or x0 > W:
+                    continue
+                hh = (sum(map(ord, name)) * 47) % 360 / 360.0
+                import colorsys
+                r, g, b = colorsys.hsv_to_rgb(hh, 0.5, 0.6)
+                cr.set_source_rgba(r, g, b, 0.9)
+                cr.rectangle(max(0, x0), ay, min(W, x1) - max(0, x0), 3)
+                cr.fill()
+            span = m.hi - m.lo
+            raw = span / 9
+            mag = 10 ** math.floor(math.log10(raw))
+            tick = next(mm * mag for mm in (1, 2, 2.5, 5, 10) if mm * mag >= raw)
+            dec = max(0, min(4, -int(math.floor(math.log10(tick / 1e6)))) if tick < 1e6 else 0)
+            cr.set_font_size(10)
+            ff = math.ceil(m.lo / tick) * tick
+            while ff < m.hi:
+                x = (ff - m.lo) / span * W
+                cr.set_source_rgba(1, 1, 1, 0.07)
+                cr.move_to(int(x) + 0.5, heat_y)
+                cr.line_to(int(x) + 0.5, ay)
+                cr.stroke()
+                cr.set_source_rgba(1, 1, 1, 0.65)
+                txt = f"{ff / 1e6:.{dec}f}"
+                e = cr.text_extents(txt)
+                cr.move_to(x - e.width / 2, ay + 14)
+                cr.show_text(txt)
+                ff += tick
+
+            # ── muspekare ──
+            if self.mouse:
+                mx, my = self.mouse
+                fm = self._x_to_freq(mx, W)
+                col = m.freq_col(fm)
+                txt = f"{fm / 1e6:.4f} MHz   upptagen {occ[col] * 100:.0f}%   topp {peak[col]:.0f} dB"
+                b = band_name(fm)
+                if b:
+                    txt += f"   {b}"
+                if arr is not None and len(arr) and heat_y <= my <= heat_y + heat_h:
+                    ri = int((my - heat_y) / heat_h * len(arr))
+                    if 0 <= ri < len(arr):
+                        txt += f"   [{arr[ri][col]:.0f} dB]"
+                cr.set_source_rgba(1, 1, 1, 0.3)
+                cr.set_line_width(1)
+                cr.move_to(int(mx) + 0.5, heat_y)
+                cr.line_to(int(mx) + 0.5, heat_y + heat_h)
+                cr.stroke()
+                cr.set_font_size(12)
+                e = cr.text_extents(txt)
+                cr.set_source_rgba(0, 0, 0, 0.7)
+                cr.rectangle(W - e.width - 14, heat_y + 3, e.width + 10, 18)
+                cr.fill()
+                cr.set_source_rgb(1, 1, 1)
+                cr.move_to(W - e.width - 9, heat_y + 16)
+                cr.show_text(txt)
+
+    class ActivityWindow(Adw.Window):
+        def __init__(self, main):
+            super().__init__(title="Aktivitetskarta – Radiospanaren")
+            import aktivitet
+            self.AK = aktivitet
+            self.main = main
+            self.mon = None
+            self.mode = "NFM"
+            self.timer = None
+            self.set_default_size(1180, 760)
+            self.set_hide_on_close(True)
+
+            tv = Adw.ToolbarView()
+            hb = Adw.HeaderBar()
+            self.btn = Gtk.ToggleButton(label="▶ Svep")
+            self.btn.add_css_class("suggested-action")
+            self.btn.connect("toggled", self._on_toggle)
+            hb.pack_start(self.btn)
+            names = [p[0] for p in aktivitet.PRESETS] + ["Eget intervall"]
+            self.preset = Gtk.DropDown.new_from_strings(names)
+            self.preset.connect("notify::selected", self._on_preset)
+            hb.pack_start(self.preset)
+            self.status = Gtk.Label(label="Välj band och tryck ▶ Svep")
+            hb.set_title_widget(self.status)
+            tv.add_top_bar(hb)
+
+            bar = Gtk.Box(spacing=6)
+            bar.add_css_class("toolbar")
+            self.e_lo = Gtk.Entry(width_chars=8, placeholder_text="Från MHz")
+            self.e_hi = Gtk.Entry(width_chars=8, placeholder_text="Till MHz")
+            bar.append(Gtk.Label(label="Band:"))
+            bar.append(self.e_lo)
+            bar.append(Gtk.Label(label="–"))
+            bar.append(self.e_hi)
+            bar.append(Gtk.Label(label="MHz"))
+            self.thr = Gtk.SpinButton.new_with_range(3, 40, 1)
+            self.thr.set_value(main.conf.get("act_thresh", 6))
+            self.thr.connect("value-changed", self._on_thr)
+            bar.append(Gtk.Label(label="   Tröskel:"))
+            bar.append(self.thr)
+            bar.append(Gtk.Label(label="dB   Färg:"))
+            cmaps = list(COLORMAPS)
+            self.cmap = Gtk.DropDown.new_from_strings(cmaps)
+            self.cmap.set_selected(cmaps.index(main.conf.get("act_colormap", "klassisk"))
+                                   if main.conf.get("act_colormap", "klassisk") in cmaps else 0)
+            self.cmap.connect("notify::selected", self._on_cmap)
+            bar.append(self.cmap)
+            tv.add_top_bar(bar)
+
+            self.view = ActivityView(main)
+            paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+            paned.set_start_child(self.view)
+            paned.set_resize_start_child(True)
+            cols = [("Frekvens (MHz)", lambda d: fmt_mhz(d["f"]), "f", False),
+                    ("Upptagen", lambda d: f"{d['occ'] * 100:.0f} %", "occ", False),
+                    ("Topp (dB)", lambda d: f"{d['pk']:.0f}", "pk", True)]
+            (self.bstore, self.bcv, self.bsel, _f, _c, bsw) = make_table(cols)
+            self.bcv.sort_by_column(_c[1], Gtk.SortType.DESCENDING)
+            self.bcv.connect("activate", lambda cv, pos: self.tune_to(self.bsel.get_item(pos).data["f"]))
+            rbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            lbl = Gtk.Label(label="Mest aktiva kanaler", xalign=0)
+            lbl.add_css_class("heading")
+            lbl.set_margin_start(8)
+            lbl.set_margin_top(6)
+            rbox.append(lbl)
+            hint = Gtk.Label(label="Klicka i kartan eller en rad för att lyssna", xalign=0)
+            hint.add_css_class("dim-label")
+            hint.set_margin_start(8)
+            rbox.append(hint)
+            rbox.append(bsw)
+            paned.set_end_child(rbox)
+            paned.set_position(880)
+            tv.set_content(paned)
+            self.set_content(tv)
+            self._set_preset(0)
+            self.connect("close-request", self._on_close)
+
+        def _set_preset(self, i):
+            P = self.AK.PRESETS
+            if 0 <= i < len(P):
+                _n, lo, hi, mode, _step = P[i]
+                self.e_lo.set_text(f"{lo:g}")
+                self.e_hi.set_text(f"{hi:g}")
+                self.mode = mode
+
+        def _on_preset(self, dd, _p):
+            self._set_preset(dd.get_selected())
+
+        def _on_thr(self, sb):
+            self.main.conf["act_thresh"] = sb.get_value()
+            if self.mon:
+                self.mon.thresh = sb.get_value()
+            self.view.queue_draw()
+
+        def _on_cmap(self, dd, _p):
+            name = list(COLORMAPS)[dd.get_selected()]
+            self.main.conf["act_colormap"] = name
+            self.view.lut = make_lut(name)
+            self.view.queue_draw()
+
+        def tune_to(self, freq):
+            self.main.tune(freq, self.mode)
+            self.main.toast(f"Mottagaren ställd på {fmt_mhz(freq)} MHz ({self.mode}) – "
+                            "svepet pausas medan du lyssnar" if self.btn.get_active() else
+                            f"Mottagaren ställd på {fmt_mhz(freq)} MHz")
+            if self.btn.get_active():
+                self.btn.set_active(False)     # pausa svepet så man kan lyssna
+
+        def _on_toggle(self, btn):
+            if btn.get_active():
+                if not self.main.engine.running:
+                    self.main.toast("Starta mottagningen först")
+                    btn.set_active(False)
+                    return
+                try:
+                    lo = parse_freq(self.e_lo.get_text())
+                    hi = parse_freq(self.e_hi.get_text())
+                    self.mon = self.AK.BandMonitor(lo, hi, thresh_db=self.thr.get_value())
+                except ValueError as ex:
+                    self.main.toast(str(ex))
+                    btn.set_active(False)
+                    return
+                self.main.scanner.stop()
+                self.main.scan_btn.set_title("Starta skanning")
+                self.main.activity_active = True
+                self.view.mon = self.mon
+                btn.set_label("■ Stoppa")
+                btn.remove_css_class("suggested-action")
+                btn.add_css_class("destructive-action")
+                log.info("Aktivitetskarta startad: %.3f–%.3f MHz, %d kanaler, %d fönster",
+                         lo / 1e6, hi / 1e6, self.mon.ncols, len(self.mon.spans))
+                if self.timer is None:
+                    self.timer = GLib.timeout_add(120, self._tick)
+            else:
+                self.main.activity_active = False
+                btn.set_label("▶ Svep")
+                btn.remove_css_class("destructive-action")
+                btn.add_css_class("suggested-action")
+
+        def _tick(self):
+            if not self.btn.get_active():
+                self.timer = None
+                return False
+            if not self.main.engine.running:
+                self.btn.set_active(False)
+                self.timer = None
+                return False
+            try:
+                self.mon.tick(self.main.engine)
+            except Exception:
+                log.exception("Fel i aktivitetskartan")
+                self.btn.set_active(False)
+                self.timer = None
+                return False
+            self.view.queue_draw()
+            self._update_list()
+            return True
+
+        def _update_list(self):
+            busy = self.mon.busiest(40)
+            have = {round(self.bstore.get_item(i).data["f"]): self.bstore.get_item(i)
+                    for i in range(self.bstore.get_n_items())}
+            seen = set()
+            for f, occ, pk in busy:
+                seen.add(round(f))
+                row = have.get(round(f))
+                d = {"f": f, "occ": occ, "pk": pk}
+                if row is None:
+                    self.bstore.append(Row(d))
+                else:
+                    row.data = d
+                    row.emit("updated")
+            for key, row in have.items():
+                if key not in seen:
+                    ok, pos = self.bstore.find(row)
+                    if ok:
+                        self.bstore.remove(pos)
+            n = self.mon.sweeps
+            self.status.set_text(f"{fmt_mhz(self.mon.lo)}–{fmt_mhz(self.mon.hi)} MHz · "
+                                 f"{n} svep · {self.mon.sweep_dt:.1f} s/svep")
+
+        def _on_close(self, *_):
+            if self.btn.get_active():
+                self.btn.set_active(False)
+            return False
+
     # ── Huvudfönster ──
     class MainWindow(Adw.ApplicationWindow):
         def __init__(self, app, conf, args):
@@ -2260,6 +2629,8 @@ def run_gui(args):
             self.suggested = []     # bärvågor som skannern hoppat över denna session
             self.ships = {}         # MMSI -> sammanslagen fartygsinformation (AIS)
             self.ship_win = None
+            self.activity_win = None
+            self.activity_active = False
             self._ship_tick = 0
             self.hub = avkodare.DecoderHub(SR, lambda m: GLib.idle_add(self._on_decoded, m))
             for k in ("ACARS", "AIS", "APRS"):
@@ -2301,6 +2672,8 @@ def run_gui(args):
                 GLib.idle_add(self._start_web)
             if args.start or args.skanna:
                 GLib.idle_add(lambda: self.btn_start.set_active(True) or False)
+            if args.aktivitetskarta:
+                GLib.timeout_add(800, lambda: self._open_activity() or False)
             if args.fartygskarta:
                 GLib.timeout_add(800, lambda: self._open_ship_map() or False)
             if args.flik:
@@ -2501,6 +2874,7 @@ def run_gui(args):
             self._button(g, "Gå till ACARS (131,7 MHz)", lambda: self._goto_decoder("ACARS"))
             self._button(g, "Gå till AIS (162 MHz)", lambda: self._goto_decoder("AIS"))
             self._button(g, "Gå till APRS (144,800 MHz)", lambda: self._goto_decoder("APRS"))
+            self._button(g, "📊 Aktivitetskarta (värmekarta över ett band)", self._open_activity)
             self._button(g, "🚢 Visa fartyg på karta (AIS)", self._open_ship_map)
             self._button(g, "✈ Öppna Flygradar (ADS-B, 1090 MHz)", self._open_radar)
             box.append(g)
@@ -2852,6 +3226,8 @@ def run_gui(args):
             return False
 
         def _on_engine_stopped(self):
+            if self.activity_active and self.activity_win:
+                self.activity_win.btn.set_active(False)
             if self.btn_start.get_active():
                 self.btn_start.set_active(False)
             self.btn_rec.set_active(False)
@@ -2922,6 +3298,8 @@ def run_gui(args):
             self.toast(f"{n} spärrade frekvenser borttagna")
 
         def _toggle_scan(self):
+            if self.activity_active and self.activity_win:
+                self.activity_win.btn.set_active(False)
             if self.scanner.active:
                 self.scanner.stop()
                 self.scan_btn.set_title("Starta skanning")
@@ -3083,6 +3461,18 @@ def run_gui(args):
             f, _m = self.DEC_TUNE[kind]
             if v and abs(self.engine.center - f) > SR * 0.44:
                 self.toast(f"{kind} ligger utanför fönstret – tryck \"Gå till {kind}\"")
+
+        def _open_activity(self):
+            try:
+                if self.activity_win is None:
+                    self.activity_win = ActivityWindow(self)
+                self.activity_win.present()
+            except Exception as ex:
+                log.exception("Kunde inte öppna aktivitetskartan")
+                self.toast(f"Kunde inte öppna aktivitetskartan: {ex}")
+                return
+            if not self.engine.running:
+                self.toast("Starta mottagningen, välj band och tryck ▶ Svep")
 
         def _open_ship_map(self):
             try:
@@ -3286,7 +3676,11 @@ def run_gui(args):
         def save_screenshot(self, path, tries=10):
             """Renderar fönstret till en PNG-fil (fungerar även under Wayland)."""
             try:
-                win = self.ship_win if (self.ship_win is not None and self.ship_win.get_visible()) else self
+                win = self
+                for w in (getattr(self, "activity_win", None), getattr(self, "ship_win", None)):
+                    if w is not None and w.get_visible():
+                        win = w
+                        break
                 w, h = win.get_width(), win.get_height()
                 paint = Gtk.WidgetPaintable.new(win)
                 snap = Gtk.Snapshot()
@@ -3623,6 +4017,7 @@ def main():
     p.add_argument("--aprs", action="store_true", help="slå på APRS-avkodning")
     p.add_argument("--direktsampling", choices=["av", "i", "q"], help="direktsampling för HF (q för RTL-SDR v3/NESDR)")
     p.add_argument("--fartygskarta", action="store_true", help="öppna fartygskartan (AIS) direkt")
+    p.add_argument("--aktivitetskarta", action="store_true", help="öppna aktivitetskartan direkt")
     p.add_argument("--flik", choices=["signallogg", "bokmarken", "avkodat"], help="flik att visa längst ner")
     p.add_argument("--skarmbild", nargs=2, metavar=("FIL", "SEKUNDER"),
                    help="spara en skärmbild av fönstret (PNG) efter angivet antal sekunder")
