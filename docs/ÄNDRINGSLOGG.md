@@ -1,5 +1,18 @@
 # Ändringslogg
 
+## 1.3.0 (2026-11-05)
+
+### Nytt: Fartygskarta (AIS)
+- Fönstret "Fartyg (AIS)" (sidopanelen → Avkodare, eller `--fartygskarta`) med OpenStreetMap-karta och fartygstabell.
+- AIS-meddelanden slås ihop per fartyg: position, fart, kurs, bäring, status, namn, anrop, typ och destination.
+- Symboler i kursriktningen med färg efter fartygstyp och spår. Förtöjda och ankrade fartyg visas som en ring, basstationer och fyrar som en prick.
+- Varning för AIS-nödsändare (AIS-SART/MOB/EPIRB).
+- Ny gemensam kartmodul, `kartvy.py`, med reserv-radarvy och knappen "Installera kartan".
+- Simulatorn har fyra fartyg som rör sig.
+
+### Rättat
+- "Visa alla" och anpassningen av kartan behåller nu zoomnivån (`go_to_full`).
+
 ## 1.2.0 (2026-11-05)
 
 ### Nytt: Flygradar (ADS-B)

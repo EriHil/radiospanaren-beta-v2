@@ -39,6 +39,12 @@ Radiospanaren gör en billig RTL-SDR-dongel till en komplett mottagarstation med
 
 Bara meddelanden med korrekt kontrollsumma (CRC) visas. Positioner kan öppnas på OpenStreetMap.
 
+**Fartygskarta (AIS)**
+- Visar fartygen som AIS-avkodaren hört på en OpenStreetMap-karta, med kursriktning, färg efter fartygstyp (även militära fartyg) och spår.
+- Tabell med MMSI, namn, anrop, typ, status, fart, kurs, position och destination. Varnar för AIS-nödsändare.
+
+![Fartygskarta](docs/bilder/fartygskarta.png)
+
 **Flygradar** (eget program, startas från Radiospanaren eller med `flygradar`)
 - Visar flygplanen i närheten på en OpenStreetMap-karta (libshumate), med kursriktning, höjdfärg och spår.
 - Avkodar Mode S och ADS-B: DF17/18, DF11 och DF4/5/20/21. CRC-24 med rättning av enstaka bitfel, och CPR-positionsavkodning (global och lokal).
@@ -86,6 +92,7 @@ radiospanaren --frekvens 131.725 --mod AM --acars --start                    # f
 radiospanaren --mod AM --skanna intervall --intervall 118-137 --kanalsteg 25 --squelch -15
 radiospanaren --direktsampling q --frekvens 14.074 --mod USB --start         # HF, FT8 på 20 m
 flygradar --start                                      # flygplan på karta (ADS-B)
+radiospanaren --frekvens 161.975 --mod NFM --ais --start --fartygskarta   # fartyg på karta (AIS)
 radiospanaren --sjalvtest                              # testa signalbehandling och avkodare
 radiospanaren --manual                                 # hela manualen
 ```
@@ -106,7 +113,7 @@ Testat på Fedora 45 (KDE) med en Nooelec NESDR SMArt v5 (R820T) och i en ren Ub
 |---|---|
 | Spektrum, vattenfall, demodulering | Testat med riktiga signaler (VHF/UHF och HF) |
 | Skanner (bokmärken, intervall, störningsfilter) | Testat med riktiga signaler |
-| AIS-avkodare | **Verifierad med riktiga fartyg.** Paket över cirka 9 dB SNR avkodas. |
+| AIS-avkodare och fartygskarta | **Verifierad med riktiga fartyg.** Paket över cirka 9 dB SNR avkodas. Kartan är testad på Fedora 45 och Ubuntu 24.04. |
 | ACARS-avkodare | Testad med syntetiska signaler enligt standarden. Ingen riktig trafik har kunnat tas emot ännu. |
 | APRS-avkodare | Testad med syntetiska signaler (klarar 7 dB SNR). Ingen riktig trafik har kunnat tas emot ännu. |
 | ADS-B / Flygradar | **Verifierad med riktiga flygplan** (inomhusantenn, Stockholmsområdet). Karta testad på Fedora 45 (libshumate 1.7) och Ubuntu 24.04 (1.2). |

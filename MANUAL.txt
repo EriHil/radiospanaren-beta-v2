@@ -1,5 +1,5 @@
 ══════════════════════════════════════════════════════════════════════
-  RADIOSPANAREN – MANUAL                                   version 1.2.0
+  RADIOSPANAREN – MANUAL                                   version 1.3.0
   SDR-mottagare, radioskanner och signallogg för Fedora
 ══════════════════════════════════════════════════════════════════════
 
@@ -34,6 +34,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   radiospanaren --ais               Slå på AIS-avkodning (fartyg)
   radiospanaren --aprs              Slå på APRS-avkodning (144,800 MHz)
   radiospanaren --flik avkodat      Visa fliken Avkodat (signallogg, bokmarken)
+  radiospanaren --fartygskarta      Öppna fartygskartan (AIS) direkt
   radiospanaren --squelch -15       Squelchnivå i dB
   radiospanaren --webb              Starta webbgränssnittet (port 8073)
   radiospanaren --webb 9000         ... på en annan port
@@ -52,6 +53,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
     radiospanaren --mod AM --skanna intervall --intervall 225-400 --kanalsteg 25 --squelch -15
     radiospanaren --frekvens 131.725 --mod AM --acars --start
     radiospanaren --frekvens 161.975 --mod NFM --ais --start --flik avkodat
+    radiospanaren --frekvens 161.975 --mod NFM --ais --start --fartygskarta
     radiospanaren --frekvens 144.8 --mod NFM --aprs --start
     radiospanaren --direktsampling q --frekvens 14.074 --mod USB --start
     radiospanaren --simulator --frekvens 131.725 --mod AM --acars --start   (test-ACARS)
@@ -175,6 +177,19 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   En lång trådantenn behövs för bra HF-mottagning; teleskopantennen räcker
   oftast bara till starka signaler.
 
+ Fartygskarta (AIS)
+  Sidopanelen → Avkodare → "🚢 Visa fartyg på karta (AIS)" öppnar ett fönster med
+  karta och tabell över fartygen som AIS-avkodaren hört: MMSI, namn, anrop,
+  fartygstyp, status, fart, kurs, position och destination. Uppgifter från
+  olika AIS-meddelanden (position, fartygsdata) slås ihop per fartyg.
+  Fartygen ritas i kursriktningen med färg efter typ (lastfartyg grönt,
+  tankfartyg rött, passagerarfartyg blått, fiske orange, militärt mörkgrått,
+  fritid/segel lila, bogser/lots/SAR/myndighet turkos). Förtöjda och ankrade
+  fartyg visas som en ring, basstationer och fyrar som en prick.
+  En AIS-nödsändare (AIS-SART/MOB/EPIRB) ger en varning och visas i rött.
+  Fartyg som inte hörts på 30 minuter tas bort. Kartan körs samtidigt med
+  vanlig mottagning – tryck "Gå till AIS (162 MHz)" i fönstret.
+
  Flygradar (ADS-B, 1090 MHz)
   Eget fönster med OpenStreetMap-karta och tabell över flygplanen i närheten:
   ICAO-adress, anropssignal, höjd, fart, kurs, stig/sjunk, squawk, position.
@@ -241,8 +256,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   Kräver GTK 4.12+ och libadwaita 1.5+, dvs. Fedora 40+, Ubuntu 24.04+,
   Linux Mint 22+ eller Debian 13+. (Ubuntu 22.04 / Mint 21 är för gamla.)
 
-    tar xzf radiospanaren-1.2.0.tar.gz
-    cd radiospanaren-1.2.0
+    tar xzf radiospanaren-1.3.0.tar.gz
+    cd radiospanaren-1.3.0
     ./installera.sh
 
   Skriptet installerar saknade paket (apt eller dnf, frågar först),
@@ -259,6 +274,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   ~/.local/share/radiospanaren/radiospanaren.py   programmet
   ~/.local/share/radiospanaren/avkodare.py        avkodare och signalidentifiering
   ~/.local/share/radiospanaren/adsb.py            ADS-B-avkodare
+  ~/.local/share/radiospanaren/kartvy.py          gemensam kartvy (fartygskartan)
   ~/.local/share/radiospanaren/adsb_karta.py      Flygradar (eget program)
   ~/.local/bin/flygradar                          startkommando för Flygradar
   ~/.config/radiospanaren/flygradar.json          Flygradars inställningar

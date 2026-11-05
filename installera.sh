@@ -117,7 +117,7 @@ fi
 # ── 3. Programfiler ─────────────────────────────────────────────────
 mkdir -p "$DEST" "$BIN" "$APPS" "$ICONS" "$STATE"
 install -m 755 "$SRC/radiospanaren.py" "$DEST/radiospanaren.py"
-install -m 644 "$SRC/avkodare.py" "$SRC/adsb.py" "$SRC/MANUAL.txt" "$DEST/"
+install -m 644 "$SRC/avkodare.py" "$SRC/adsb.py" "$SRC/kartvy.py" "$SRC/MANUAL.txt" "$DEST/"
 install -m 755 "$SRC/adsb_karta.py" "$DEST/adsb_karta.py"
 install -m 755 "$SRC/installera.sh" "$DEST/installera.sh"
 install -m 644 "$SRC/$APP_ID.svg" "$ICONS/$APP_ID.svg"

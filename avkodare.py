@@ -456,6 +456,28 @@ def ais_ship_type(t):
     return f"Typ {t}" if t else "Okänd"
 
 
+def ais_category(shiptype, mmsi=""):
+    """Grov kategori för kartans färger."""
+    t = shiptype or 0
+    if str(mmsi).startswith("97"):
+        return "sar"          # AIS-SART/MOB/EPIRB
+    if t == 35:
+        return "militar"
+    if t in (36, 37):
+        return "fritid"
+    if t == 30:
+        return "fiske"
+    if 60 <= t <= 69:
+        return "passagerare"
+    if 70 <= t <= 79:
+        return "last"
+    if 80 <= t <= 89:
+        return "tank"
+    if t in (31, 32, 50, 51, 52, 53, 54, 55, 58) or 40 <= t <= 49:
+        return "tjanst"
+    return "okand"
+
+
 def _u(b, s, n):
     v = 0
     for i in range(s, s + n):
@@ -492,8 +514,9 @@ def parse_ais(payload, ships=None):
     mmsi = _u(bits, 8, 30)
     m = {"type": "AIS", "src": str(mmsi), "name": "", "kind": AIS_TYPES.get(t, f"Meddelandetyp {t}"),
          "pos": None, "text": "", "details": [("MMSI", str(mmsi)), ("Meddelandetyp", f"{t} – "
-                                              f"{AIS_TYPES.get(t, 'övrigt')}")], "ais_type": t}
+                                              f"{AIS_TYPES.get(t, 'övrigt')}")], "ais_type": t, "ais": {}}
     d = m["details"]
+    v = m["ais"]          # strukturerade värden för fartygskartan
     try:
         if t in (1, 2, 3) and len(bits) >= 168:
             nav = _u(bits, 38, 4)
@@ -504,6 +527,8 @@ def parse_ais(payload, ships=None):
             hdg = _u(bits, 128, 9)
             m["pos"] = _pos(lat, lon)
             m["text"] = f"{AIS_NAV.get(nav, nav)}, {sog:.1f} knop, kurs {cog:.0f}°"
+            v.update(nav=nav, status=AIS_NAV.get(nav, str(nav)), sog=None if sog >= 102.3 else sog,
+                     cog=None if cog >= 360 else cog, hdg=None if hdg == 511 else hdg, cls="A")
             d += [("Status", AIS_NAV.get(nav, str(nav))), ("Fart", f"{sog:.1f} knop"), ("Kurs", f"{cog:.1f}°"),
                   ("Bäring", "–" if hdg == 511 else f"{hdg}°")]
         elif t in (18, 19) and len(bits) >= 168:
@@ -514,9 +539,13 @@ def parse_ais(payload, ships=None):
             m["pos"] = _pos(lat, lon)
             m["text"] = f"{sog:.1f} knop, kurs {cog:.0f}°"
             d += [("Fart", f"{sog:.1f} knop"), ("Kurs", f"{cog:.1f}°")]
+            hdg_b = _u(bits, 124, 9)
+            v.update(sog=None if sog >= 102.3 else sog, cog=None if cog >= 360 else cog,
+                     hdg=None if hdg_b == 511 else hdg_b, cls="B")
             if t == 19 and len(bits) >= 312:
                 m["name"] = _txt6(bits, 143, 20)
                 d.append(("Fartygstyp", ais_ship_type(_u(bits, 263, 8))))
+                v.update(shiptype=_u(bits, 263, 8))
         elif t == 4 and len(bits) >= 168:
             lon = _i(bits, 79, 28) / 600000
             lat = _i(bits, 107, 27) / 600000
@@ -525,6 +554,7 @@ def parse_ais(payload, ships=None):
                   f"{_u(bits, 61, 5):02d}:{_u(bits, 66, 6):02d}:{_u(bits, 72, 6):02d} UTC")
             m["text"] = f"Tid {ts}"
             d.append(("Tid", ts))
+            v.update(base=True)
         elif t == 5 and len(bits) >= 420:
             call = _txt6(bits, 70, 7)
             name = _txt6(bits, 112, 20)
@@ -534,6 +564,7 @@ def parse_ais(payload, ships=None):
             length = _u(bits, 240, 9) + _u(bits, 249, 9)
             m["name"] = name
             m["text"] = f"{ais_ship_type(st)}, anrop {call}, {length} m, mot {dest or '–'}"
+            v.update(call=call, shiptype=st, dest=dest, length=length, imo=imo or None, cls="A")
             d += [("Namn", name), ("Anropssignal", call), ("IMO", str(imo) if imo else "–"),
                   ("Fartygstyp", ais_ship_type(st)), ("Längd", f"{length} m"), ("Destination", dest or "–")]
             if ships is not None and name:
@@ -551,6 +582,7 @@ def parse_ais(payload, ships=None):
                 st = _u(bits, 40, 8)
                 call = _txt6(bits, 90, 7)
                 m["text"] = f"{ais_ship_type(st)}, anrop {call}"
+                v.update(call=call, shiptype=st, cls="B")
                 d += [("Fartygstyp", ais_ship_type(st)), ("Anropssignal", call)]
         elif t == 21 and len(bits) >= 272:
             m["name"] = _txt6(bits, 43, 20)
@@ -558,6 +590,7 @@ def parse_ais(payload, ships=None):
             lat = _i(bits, 192, 27) / 600000
             m["pos"] = _pos(lat, lon)
             m["text"] = "Navigationshjälpmedel (fyr/boj)"
+            v.update(aton=True)
     except IndexError:
         pass
     if ships is not None and not m["name"]:
@@ -605,7 +638,7 @@ def decode_ais(y):
 def make_ais_payload(mmsi=265123456, lat=59.3293, lon=18.0686, sog=12.3, cog=87.5, nav=0, t=1):
     fields = [(t, 6), (0, 2), (mmsi, 30), (nav, 4), (128, 8), (int(sog * 10), 10), (1, 1),
               (int(round(lon * 600000)) & ((1 << 28) - 1), 28), (int(round(lat * 600000)) & ((1 << 27) - 1), 27),
-              (int(cog * 10), 12), (90, 9), (30, 6), (0, 2), (0, 3), (0, 1), (0, 19)]
+              (int(cog * 10), 12), (int(round(cog)) % 360, 9), (30, 6), (0, 2), (0, 3), (0, 1), (0, 19)]
     bits = []
     for v, n in fields:
         bits += [(v >> (n - 1 - i)) & 1 for i in range(n)]

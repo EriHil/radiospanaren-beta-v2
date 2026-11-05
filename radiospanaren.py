@@ -28,7 +28,7 @@ import threading
 
 APP_NAME = "Radiospanaren"
 APP_ID = "se.eh.Radiospanaren"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "radiospanaren")
@@ -635,13 +635,20 @@ class SimSource(BaseSource):
             "ACARS": (A.make_acars_burst(SR, reg=".SE-SIM", label="H1", blk="2",
                                          text="M02ASK0042TESTMEDDELANDE FRAN SIMULATORN"), 6),
             "AIS": (A.make_ais_burst(SR, A.make_ais_payload(mmsi=265999001, lat=59.3245, lon=18.0712,
-                                                            sog=8.4, cog=135.0)), 3),
+                                                            sog=8.4, cog=135.0)), 1.5),
             "AIS5": (A.make_ais_burst(SR, A.make_ais5_payload(mmsi=265999001, call="SIMU", name="SIM TESTFARTYG",
-                                                              ship_type=60, dest="VISBY")), 7),
+                                                              ship_type=60, dest="VISBY")), 4),
             "APRS": (A.make_aprs_burst(SR, A.make_ax25_frame(src="SA0SIM-9", path=("WIDE1-1", "WIDE2-1"),
                                                               info="!5919.47N/01804.27E>Simulator-APRS")), 8),
         }
         self.burst_start = {k: int(SR * (0.5 + i * 0.37)) for i, k in enumerate(self.bursts)}
+        # simulerade fartyg: (mmsi, lat, lon, fart kn, kurs, status, namn, anrop, typ, destination)
+        self.ais_ships = [(265999001, 59.3245, 18.0712, 8.4, 135.0, 0, "SIM PASSAGERARE", "SIMA", 60, "VISBY"),
+                          (265999002, 59.2900, 18.2600, 11.0, 60.0, 0, "SIM TANKER", "SIMB", 80, "ROTTERDAM"),
+                          (265999003, 59.3550, 18.1400, 4.5, 300.0, 8, "SIM SEGLARE", "SIMC", 36, "SANDHAMN"),
+                          (265999004, 59.3170, 18.0950, 0.0, 0.0, 5, "SIM FORTOJD", "SIMD", 70, "STOCKHOLM")]
+        self.ais_i = 0
+        self.ais_t0 = time.monotonic()
         self._take()
         log.info("Simulatorn startad")
 
@@ -674,9 +681,14 @@ class SimSource(BaseSource):
             elif kind in self.bursts:
                 arr, period = self.bursts[kind]
                 st = self.burst_start[kind]
+                new = False
                 while st + len(arr) <= self.n0:          # nästa skur
                     st += int(SR * period)
+                    new = True
                 self.burst_start[kind] = st
+                if new and kind in ("AIS", "AIS5"):      # nytt fartyg och ny position för varje skur
+                    arr = self._next_ais(kind)
+                    self.bursts[kind] = (arr, period)
                 lo, hi = max(st, self.n0), min(st + len(arr), self.n0 + BLOCK)
                 if lo < hi:
                     env = np.zeros(BLOCK, np.complex64)
@@ -687,6 +699,22 @@ class SimSource(BaseSource):
                 x += a * on * (np.exp(1j * (ph + 2 * np.pi * 700 * t)) + 0.7 * np.exp(1j * (ph + 2 * np.pi * 1900 * t)))
         self.n0 += BLOCK
         return x.astype(np.complex64), self.center, None
+
+
+def _sim_ship_payload(sim, kind):
+    A = avkodare
+    sim.ais_i += 1
+    mmsi, lat, lon, sog, cog, nav, name, call, st, dest = sim.ais_ships[sim.ais_i % len(sim.ais_ships)]
+    if kind == "AIS5":
+        return A.make_ais_burst(SR, A.make_ais5_payload(mmsi=mmsi, call=call, name=name, ship_type=st, dest=dest))
+    t = time.monotonic() - sim.ais_t0
+    d = sog * 1.852 / 3600 * t / 111.0 * 20       # 20 gånger snabbare, så att rörelsen syns
+    lat2 = lat + d * math.cos(math.radians(cog))
+    lon2 = lon + d * math.sin(math.radians(cog)) / math.cos(math.radians(lat))
+    return A.make_ais_burst(SR, A.make_ais_payload(mmsi=mmsi, lat=lat2, lon=lon2, sog=sog, cog=cog, nav=nav))
+
+
+SimSource._next_ais = _sim_ship_payload
 
 
 def make_source(conf):
@@ -2040,6 +2068,160 @@ def run_gui(args):
                 else:
                     self._next_span(now)
 
+    # ── Fartygskarta (AIS) ──
+    class ShipWindow(Adw.Window):
+        MAX_AGE = 30 * 60          # fartyg försvinner efter 30 min utan meddelanden
+
+        def __init__(self, main):
+            super().__init__(title="Fartyg (AIS) – Radiospanaren")
+            import kartvy
+            self.K = kartvy
+            self.main = main
+            self.rows = {}
+            self.set_default_size(1250, 780)
+            self.set_hide_on_close(True)
+            tv = Adw.ToolbarView()
+            hb = Adw.HeaderBar()
+            self.status = Gtk.Label(label="Väntar på AIS …")
+            hb.set_title_widget(self.status)
+            b = Gtk.Button(label="Visa alla")
+            b.connect("clicked", lambda *_: self.mp.fit_all() or main.toast("Inga fartyg med position ännu"))
+            hb.pack_end(b)
+            b2 = Gtk.Button(label="Gå till AIS (162 MHz)")
+            b2.set_tooltip_text("Ställ in mottagaren på AIS-kanalerna och slå på AIS-avkodningen")
+            b2.connect("clicked", lambda *_: main._goto_decoder("AIS"))
+            hb.pack_start(b2)
+            tv.add_top_bar(hb)
+
+            lat, lon, zoom = main.conf.get("ship_map_view", [59.33, 18.06, 9.0])
+            self.mp = kartvy.MapPanel(center=(lat, lon), zoom=zoom or 9.0, on_select=self._select,
+                                      user_agent=f"Radiospanaren/{VERSION} (+https://github.com/EriHil/radiospanaren-beta-v1)",
+                                      toast=main.toast)
+            left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            left.append(self.mp)
+            legend = Gtk.Box(spacing=12)
+            legend.set_margin_start(8)
+            legend.set_margin_top(4)
+            legend.set_margin_bottom(4)
+            for cat in ("last", "tank", "passagerare", "fiske", "militar", "fritid", "tjanst", "okand"):
+                r, g, bb = kartvy.COLORS[cat]
+                lb = Gtk.Label()
+                lb.set_markup(f'<span foreground="#{int(r * 255):02x}{int(g * 255):02x}{int(bb * 255):02x}">■</span> '
+                              f'{GLib.markup_escape_text(kartvy.CATEGORY_NAMES[cat])}')
+                lb.add_css_class("caption")
+                legend.append(lb)
+            lb = Gtk.Label(label="○ förtöjd/till ankars")
+            lb.add_css_class("caption")
+            legend.append(lb)
+            sw_l = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.NEVER)
+            sw_l.set_child(legend)
+            left.append(sw_l)
+
+            cols = [
+                ("MMSI", lambda d: d["mmsi"], "mmsi", False),
+                ("Namn", lambda d: d["name"] or d["special"], "name", False),
+                ("Anrop", lambda d: d["call"], "call", False),
+                ("Typ", lambda d: avkodare.ais_ship_type(d["shiptype"]) if d["shiptype"] is not None else "", "shiptype", False),
+                ("Status", lambda d: d["status"], "status", False),
+                ("Fart", lambda d: f"{d['sog']:.1f} kn" if d["sog"] is not None else "", "sog", False),
+                ("Kurs", lambda d: f"{d['cog']:.0f}°" if d["cog"] is not None else "", "cog", False),
+                ("Position", lambda d: f"{d['pos'][0]:.4f}, {d['pos'][1]:.4f}" if d["pos"] else "", "pos", False),
+                ("Destination", lambda d: d["dest"], "dest", True),
+                ("Senast", lambda d: _ago(d["last"]), "last", False),
+            ]
+            (self.store, self.cv, self.sel, _f, tcols, sw) = make_table(cols)
+            self.cv.sort_by_column(tcols[-1], Gtk.SortType.DESCENDING)
+            self.sel.set_autoselect(False)
+            self.sel.set_can_unselect(True)
+            self.sel.connect("notify::selected-item", self._on_row)
+            self.cv.connect("activate", lambda cv, pos: self._osm(self.sel.get_item(pos)))
+            right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            hint = Gtk.Label(label="Klicka: visa på kartan · Dubbelklicka: öppna i OpenStreetMap", xalign=0)
+            hint.add_css_class("dim-label")
+            hint.set_margin_start(8)
+            hint.set_margin_top(4)
+            hint.set_margin_bottom(4)
+            right.append(hint)
+            right.append(sw)
+            paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+            paned.set_start_child(left)
+            paned.set_end_child(right)
+            paned.set_position(700)
+            tv.set_content(paned)
+            self.set_content(tv)
+            self._fit_n = 0
+            self._opened = time.time()
+            self._auto_fit = "ship_map_view" not in main.conf
+            self.connect("close-request", self._on_close)
+
+        def _on_close(self, *_):
+            self.main.conf["ship_map_view"] = list(self.mp.view())
+            return False
+
+        def _select(self, mmsi):
+            m = self.sel.get_model()
+            for i in range(m.get_n_items()):
+                if m.get_item(i).data["mmsi"] == mmsi:
+                    self.sel.set_selected(i)
+                    return
+
+        def _on_row(self, sel, _p):
+            it = sel.get_selected_item()
+            if it:
+                self._auto_fit = False          # användaren styr kartan nu
+                self.mp.select(it.data["mmsi"])
+
+        def _osm(self, item):
+            if item and item.data["pos"]:
+                lat, lon = item.data["pos"]
+                try:
+                    Gio.AppInfo.launch_default_for_uri(
+                        f"https://www.openstreetmap.org/?mlat={lat:.5f}&mlon={lon:.5f}#map=13/{lat:.5f}/{lon:.5f}", None)
+                except GLib.Error as ex:
+                    log.error("Kunde inte öppna kartan: %s", ex)
+
+        def refresh(self):
+            K = self.K
+            now = time.time()
+            ships = self.main.ships
+            for mmsi in [k for k, v in ships.items() if now - v["last"] > self.MAX_AGE]:
+                ships.pop(mmsi)
+                row = self.rows.pop(mmsi, None)
+                if row:
+                    ok, pos = self.store.find(row)
+                    if ok:
+                        self.store.remove(pos)
+                self.mp.remove(mmsi)
+            for mmsi, d in ships.items():
+                row = self.rows.get(mmsi)
+                if row is None:
+                    row = Row(d)
+                    self.rows[mmsi] = row
+                    self.store.append(row)
+                else:
+                    row.data = d
+                    row.emit("updated")
+                if d["pos"]:
+                    cat = avkodare.ais_category(d["shiptype"], mmsi)
+                    still = d["nav"] in (1, 5) or (d["sog"] is not None and d["sog"] < 0.5)
+                    shape = "dot" if d["special"] else ("ring" if still else "ship")
+                    head = d["hdg"] if d["hdg"] is not None else (d["cog"] or 0)
+                    title = d["name"] or d["special"] or mmsi
+                    if d["sog"] is not None and not still and not d["special"]:
+                        title += f"\n{d['sog']:.1f} kn"
+                    self.mp.update(mmsi, d["pos"][0], d["pos"][1], heading=head, title=title,
+                                   color=K.COLORS[cat], shape=shape, alert=d["alert"], trail=not d["special"])
+            npos = sum(1 for d in ships.values() if d["pos"])
+            self.status.set_text(f"{len(ships)} fartyg · {npos} med position")
+            # anpassa kartan när fler fartyg dyker upp de första minuterna
+            if self._auto_fit and npos > self._fit_n and time.time() - self._opened < 180:
+                self._fit_n = npos
+                self.mp.fit_all()
+
+    def _ago(t):
+        d = max(0, time.time() - t)
+        return f"{d:.0f} s" if d < 120 else f"{d / 60:.0f} min"
+
     # ── Huvudfönster ──
     class MainWindow(Adw.ApplicationWindow):
         def __init__(self, app, conf, args):
@@ -2076,6 +2258,9 @@ def run_gui(args):
             e.add_sink(self.audio)
             self.decoded_rows = 0
             self.suggested = []     # bärvågor som skannern hoppat över denna session
+            self.ships = {}         # MMSI -> sammanslagen fartygsinformation (AIS)
+            self.ship_win = None
+            self._ship_tick = 0
             self.hub = avkodare.DecoderHub(SR, lambda m: GLib.idle_add(self._on_decoded, m))
             for k in ("ACARS", "AIS", "APRS"):
                 self.hub.enabled[k] = bool(conf.get(k.lower(), False))
@@ -2116,6 +2301,8 @@ def run_gui(args):
                 GLib.idle_add(self._start_web)
             if args.start or args.skanna:
                 GLib.idle_add(lambda: self.btn_start.set_active(True) or False)
+            if args.fartygskarta:
+                GLib.timeout_add(800, lambda: self._open_ship_map() or False)
             if args.flik:
                 GLib.idle_add(lambda: self.bottom_nb.set_current_page(
                     ["signallogg", "bokmarken", "avkodat"].index(args.flik)) or False)
@@ -2314,6 +2501,7 @@ def run_gui(args):
             self._button(g, "Gå till ACARS (131,7 MHz)", lambda: self._goto_decoder("ACARS"))
             self._button(g, "Gå till AIS (162 MHz)", lambda: self._goto_decoder("AIS"))
             self._button(g, "Gå till APRS (144,800 MHz)", lambda: self._goto_decoder("APRS"))
+            self._button(g, "🚢 Visa fartyg på karta (AIS)", self._open_ship_map)
             self._button(g, "✈ Öppna Flygradar (ADS-B, 1090 MHz)", self._open_radar)
             box.append(g)
 
@@ -2896,6 +3084,48 @@ def run_gui(args):
             if v and abs(self.engine.center - f) > SR * 0.44:
                 self.toast(f"{kind} ligger utanför fönstret – tryck \"Gå till {kind}\"")
 
+        def _open_ship_map(self):
+            try:
+                if self.ship_win is None:
+                    self.ship_win = ShipWindow(self)
+                self.ship_win.refresh()
+                self.ship_win.present()
+            except Exception as ex:
+                log.exception("Kunde inte öppna fartygskartan")
+                self.toast(f"Kunde inte öppna fartygskartan: {ex}")
+                return
+            if not self.hub.enabled["AIS"]:
+                self.toast("AIS-avkodningen är av – tryck \"Gå till AIS\" i fartygsfönstret")
+
+        def _ais_update(self, msg):
+            v = msg.get("ais") or {}
+            mmsi = msg["src"]
+            now = msg.get("time", time.time())
+            d = self.ships.get(mmsi)
+            if d is None:
+                d = {"mmsi": mmsi, "name": "", "call": "", "shiptype": None, "status": "", "nav": None,
+                     "sog": None, "cog": None, "hdg": None, "pos": None, "dest": "", "first": now, "last": now,
+                     "msgs": 0, "special": "", "alert": False}
+                self.ships[mmsi] = d
+            for k in ("call", "shiptype", "status", "nav", "sog", "cog", "hdg", "dest"):
+                if k in v and v[k] not in (None, ""):
+                    d[k] = v[k]
+            if msg.get("name"):
+                d["name"] = msg["name"]
+            if msg.get("pos"):
+                d["pos"] = tuple(msg["pos"])
+            if v.get("base"):
+                d["special"] = "Basstation"
+            elif v.get("aton"):
+                d["special"] = "Fyr/boj"
+            d["last"] = now
+            d["msgs"] += 1
+            alert = mmsi.startswith("97") or v.get("nav") == 14
+            if alert and not d["alert"]:
+                self.toast(f"AIS-NÖDSÄNDARE: {mmsi} {d['name']} – se fartygskartan", 15)
+                log.warning("AIS-nödsändare (SART/MOB/EPIRB): %s %s %s", mmsi, d["name"], d["pos"])
+            d["alert"] = alert
+
         def _open_radar(self):
             """Startar Flygradar (adsb_karta.py) som eget program. Dongeln kan bara användas av ett program."""
             path = os.path.join(APP_DIR, "adsb_karta.py")
@@ -2934,6 +3164,8 @@ def run_gui(args):
             self.tune(f, m)
 
         def _on_decoded(self, msg):
+            if msg.get("type") == "AIS":
+                self._ais_update(msg)
             self.dec_store.append(Row(msg))
             self.decoded_rows += 1
             self.dec_count.set_text(f"{self.decoded_rows} meddelanden")
@@ -3054,8 +3286,9 @@ def run_gui(args):
         def save_screenshot(self, path, tries=10):
             """Renderar fönstret till en PNG-fil (fungerar även under Wayland)."""
             try:
-                w, h = self.get_width(), self.get_height()
-                paint = Gtk.WidgetPaintable.new(self)
+                win = self.ship_win if (self.ship_win is not None and self.ship_win.get_visible()) else self
+                w, h = win.get_width(), win.get_height()
+                paint = Gtk.WidgetPaintable.new(win)
                 snap = Gtk.Snapshot()
                 paint.snapshot(snap, w, h)
                 node = snap.to_node()
@@ -3066,7 +3299,7 @@ def run_gui(args):
                     else:
                         log.warning("Skärmbild: fönstret ritades inte (är det minimerat?)")
                     return False
-                tex = self.get_renderer().render_texture(node, None)
+                tex = win.get_renderer().render_texture(node, None)
                 tex.save_to_png(path)
                 log.info("Skärmbild sparad: %s", path)
             except Exception:
@@ -3124,6 +3357,12 @@ def run_gui(args):
                 log.exception("Fel vid uppdatering av signalloggen")
             e = self.engine
             self.scan_lbl.set_text(self.scanner.status)
+            self._ship_tick += 1
+            if self.ship_win is not None and self.ship_win.get_visible() and self._ship_tick % 5 == 0:
+                try:
+                    self.ship_win.refresh()
+                except Exception:
+                    log.exception("Fel vid uppdatering av fartygskartan")
             h = self.hub
             h.extra = {"ACARS": self.freq if (e.mode == "AM" and 118e6 <= self.freq <= 137e6) else None,
                        "APRS": self.freq if (e.mode == "NFM" and 144e6 <= self.freq <= 146e6) else None}
@@ -3151,6 +3390,8 @@ def run_gui(args):
             try:
                 self.conf["window"] = [self.get_width(), self.get_height()]
                 self.conf["sidebar_width"] = self.outer.get_position()
+                if self.ship_win is not None:
+                    self.conf["ship_map_view"] = list(self.ship_win.mp.view())
                 save_conf(self.conf)
                 self.scanner.stop()
                 self.engine.stop()
@@ -3190,7 +3431,8 @@ def run_gui(args):
                 return
             css = Gtk.CssProvider()
             css.load_from_string(".freq-entry { font-family: monospace; font-size: 16pt; font-weight: bold; "
-                                 "color: #7fe0d0; }")
+                                 "color: #7fe0d0; } .map-label { background: rgba(0,0,0,0.65); color: white; "
+                                 "border-radius: 4px; padding: 0 3px; font-size: 8pt; font-weight: bold; }")
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css,
                                                       Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             if os.path.exists(CSS_FILE):
@@ -3380,6 +3622,7 @@ def main():
     p.add_argument("--ais", action="store_true", help="slå på AIS-avkodning (fartyg)")
     p.add_argument("--aprs", action="store_true", help="slå på APRS-avkodning")
     p.add_argument("--direktsampling", choices=["av", "i", "q"], help="direktsampling för HF (q för RTL-SDR v3/NESDR)")
+    p.add_argument("--fartygskarta", action="store_true", help="öppna fartygskartan (AIS) direkt")
     p.add_argument("--flik", choices=["signallogg", "bokmarken", "avkodat"], help="flik att visa längst ner")
     p.add_argument("--skarmbild", nargs=2, metavar=("FIL", "SEKUNDER"),
                    help="spara en skärmbild av fönstret (PNG) efter angivet antal sekunder")

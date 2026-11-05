@@ -425,9 +425,13 @@ def run_gui(args):
 
         def center_on(self, lat, lon, zoom=None):
             if self.smap:
-                if zoom:
-                    self.viewport.set_zoom_level(zoom)
-                self.smap.get_map().go_to(lat, lon)
+                mp = self.smap.get_map()
+                if zoom and hasattr(mp, "go_to_full"):
+                    mp.go_to_full(lat, lon, zoom)
+                else:
+                    if zoom:
+                        self.viewport.set_zoom_level(zoom)
+                    mp.go_to(lat, lon)
             elif self.fallback:
                 self.fallback.center_on(lat, lon)
 
