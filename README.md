@@ -114,7 +114,7 @@ Hela manualen, med alla kommandon, filtersyntax, mus och tangenter, filer och va
 
 ## Status och kända begränsningar
 
-Testat på Fedora 45 (KDE) med en Nooelec NESDR SMArt v5 (R820T) och i en ren Ubuntu 24.04-miljö (samma bas som Linux Mint 22).
+Testat på Fedora 45 (KDE) med en Nooelec NESDR SMArt v5 (R820T) och i rena Ubuntu 24.04- och Debian 13-miljöer (samma bas som Linux Mint 22 respektive Debian stable).
 
 | Del | Status |
 |---|---|
