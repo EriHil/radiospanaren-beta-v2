@@ -14,6 +14,8 @@ import math
 import time
 import threading
 import logging
+import json
+import urllib.request
 
 import numpy as np
 
@@ -460,6 +462,93 @@ class AdsbReceiver:
                      ", ".join(f"{k}:{v}" for k, v in sorted(st["df"].items())) or "-")
             if self.on_stopped:
                 self.on_stopped()
+
+
+# ── Internetkälla (adsb.lol) ────────────────────────────────────────────
+class AdsbLolFeed:
+    """Flygplan från adsb.lol:s öppna API i stället för en egen mottagare. Ingen SDR behövs.
+    Fyller en ModeSDecoder, så att Flygradar visar dem på samma sätt som vanligt."""
+    RADIUS_NM = 250
+    INTERVAL = 5.0
+    MAX_WAIT = 60.0
+
+    def __init__(self, lat, lon, user_agent, on_error=None):
+        self.url = f"https://api.adsb.lol/v2/point/{lat:.5f}/{lon:.5f}/{self.RADIUS_NM}"
+        self.user_agent = user_agent
+        self.on_error = on_error
+        self.dec = ModeSDecoder()
+        self.running = False
+        self.last_ok = 0.0
+        self._halt = threading.Event()
+
+    def start(self):
+        self.running = True
+        threading.Thread(target=self._run, name="adsb.lol", daemon=True).start()
+
+    def stop(self):
+        self.running = False
+        self._halt.set()
+
+    def _run(self):
+        log.info("adsb.lol-läge startat (radie %d NM)", self.RADIUS_NM)
+        wait, failing = self.INTERVAL, False
+        while not self._halt.is_set():
+            try:
+                self._update(self._fetch())
+                self.last_ok = time.time()
+                if failing:
+                    log.info("adsb.lol svarar igen")
+                wait, failing = self.INTERVAL, False
+            except Exception as e:
+                wait = min(self.MAX_WAIT, wait * 2)
+                if not failing and not self._halt.is_set():
+                    failing = True
+                    log.warning("adsb.lol: %s", e)
+                    if self.on_error:
+                        self.on_error(f"adsb.lol svarar inte: {e}")
+            self._halt.wait(wait)
+        log.info("adsb.lol-läge stoppat")
+
+    def _fetch(self):
+        req = urllib.request.Request(self.url, headers={"Accept": "application/json", "User-Agent": self.user_agent})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.load(r)
+        if not isinstance(data.get("ac"), list):
+            raise ValueError(data.get("msg") or "oväntat svar")
+        return data
+
+    def _update(self, data):
+        now = time.time()
+        dec = self.dec
+        with dec.lock:
+            seen = set()
+            for a in data["ac"]:
+                icao = (a.get("hex") or "").upper()
+                if not icao:
+                    continue
+                seen.add(icao)
+                ac = dec.aircraft.get(icao)
+                if ac is None:
+                    ac = dec.aircraft[icao] = Aircraft(icao, now)
+                    dec.new_aircraft.append(icao)
+                if a.get("messages") is not None:
+                    ac.msgs = a["messages"]
+                ac.callsign = (a.get("flight") or "").strip()
+                alt = a.get("alt_baro")
+                ac.alt = 0 if alt == "ground" else (round(alt) if isinstance(alt, (int, float)) else None)
+                ac.gs = None if a.get("gs") is None else round(a["gs"])
+                ac.track = None if a.get("track") is None else round(a["track"])
+                ac.vr = None if a.get("baro_rate") is None else round(a["baro_rate"])
+                ac.squawk = a.get("squawk") or ""
+                ac.category = a.get("category") or ""
+                ac.last = now - (a.get("seen") or 0)
+                lat, lon = a.get("lat"), a.get("lon")
+                if lat is not None and lon is not None and (a.get("seen_pos") or 0) <= 60:
+                    ac.lat, ac.lon = round(lat, 5), round(lon, 5)
+                else:
+                    ac.lat = ac.lon = None
+            for k in [k for k in dec.aircraft if k not in seen]:
+                del dec.aircraft[k]
 
 
 # ── Självtest ───────────────────────────────────────────────────────────
