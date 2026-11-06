@@ -100,6 +100,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   flygradar --start                 Starta och börja ta emot direkt
   flygradar --simulator --start     Prova med simulerade flygplan
   flygradar --tcp VÄRD:PORT         Använd en rtl_tcp-server
+  flygradar --kalla adsblol         Flygplan från adsb.lol på internet
   flygradar --forstarkning 40       Annan förstärkning (standard 49,6 dB)
   flygradar --sjalvtest             Testa ADS-B-avkodaren (utan fönster)
   flygradar --skarmbild FIL 10      Spara en skärmbild efter 10 s
@@ -377,6 +378,11 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   Kartan kräver libshumate. Saknas den visas en enkel radarvy och knappen
   "Installera kartan" (frågar efter ditt lösenord och startar sedan om).
   Kartrutorna hämtas från OpenStreetMap och kräver internet.
+  Källan "adsb.lol (internet)" i listan hämtar flygplan inom 250 nautiska mil
+  från kartans mitt när du startar, var 5:e sekund, i stället för dongeln.
+  Den kräver internet och visar flygplan som andra matar in till adsb.lol,
+  inte det din dongel hör. Mittpunkten skickas till adsb.lol vid varje anrop.
+  Flygplansdata: adsb.lol (ODbL).
 
  Avkodare (sidopanelen → Avkodare, fliken "Avkodat")
   Mottagarfönstret är ca 1,2 MHz brett, så det går att avkoda ett band i taget:
@@ -470,7 +476,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
      har tidsgräns. "Fullt upptagen" = prova en annan Kiwi. "Tillåter bara
      lyssnare i webbläsaren" = ägaren har stängt den för andra program.
    • Intervallskanning går inte (för smalt band); bokmärkesskanning fungerar.
-   • Flygradar (1090 MHz) använder alltid den egna dongeln.
+   • Flygradar (1090 MHz) använder aldrig KiwiSDR, bara egen dongel eller adsb.lol.
 
  Uppspelning av IQ-fil
   Välj Källa → "IQ-fil (uppspelning)", tryck "Välj …" och sedan ▶ Starta.

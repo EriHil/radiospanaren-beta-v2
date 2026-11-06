@@ -31,8 +31,9 @@ import adsb as A               # noqa: E402
 log = R.log
 RADAR_ID = "se.eh.Signalspanaren.Flygradar"
 RADAR_CONF = os.path.join(R.CONF_DIR, "flygradar.json")
-SOURCE_NAMES = ["RTL-SDR (USB)", "rtl_tcp (nätverk)", "Simulator (test utan SDR)"]
-SOURCES = ["rtl", "tcp", "sim"]
+SOURCE_NAMES = ["RTL-SDR (USB)", "rtl_tcp (nätverk)", "Simulator (test utan SDR)", "adsb.lol (internet, ingen dongel)"]
+SOURCES = ["rtl", "tcp", "sim", "adsblol"]
+ADSBLOL_UA = f"Signalspanaren-Flygradar/{R.VERSION} (+https://github.com/EriHil/signalspanaren)"
 EMERGENCY = {"7500": "KAPNING", "7600": "RADIOFEL", "7700": "NÖDLÄGE"}
 
 
@@ -542,14 +543,18 @@ def run_gui(args):
         # ── mottagning ──
         def _on_toggle(self, btn):
             if btn.get_active():
-                try:
-                    src = make_source(self.conf)
-                except R.SourceError as e:
-                    self.toast(str(e))
-                    btn.set_active(False)
-                    return
-                self.rx = A.AdsbReceiver(src, on_error=lambda m: GLib.idle_add(self._on_error, m),
-                                         on_stopped=lambda: GLib.idle_add(self._on_stopped))
+                on_error = lambda m: GLib.idle_add(self._on_error, m)
+                if self.conf["source"] == "adsblol":
+                    self.rx = A.AdsbLolFeed(self.conf["lat"], self.conf["lon"], ADSBLOL_UA, on_error=on_error)
+                else:
+                    try:
+                        src = make_source(self.conf)
+                    except R.SourceError as e:
+                        self.toast(str(e))
+                        btn.set_active(False)
+                        return
+                    self.rx = A.AdsbReceiver(src, on_error=on_error,
+                                             on_stopped=lambda: GLib.idle_add(self._on_stopped))
                 self.rx.start()
                 btn.set_label("■ Stoppa")
                 btn.remove_css_class("suggested-action")
@@ -680,8 +685,13 @@ def run_gui(args):
             rate = (st["valid"] - self.last_valid) / max(0.1, now - self.last_t)
             self.last_valid, self.last_t = st["valid"], now
             npos = sum(1 for p in self.planes.values() if p["data"].get("lat") is not None)
+            if isinstance(self.rx, A.AdsbLolFeed):
+                fart = (f"data från adsb.lol · uppdaterad för {now - self.rx.last_ok:.0f} s sedan"
+                        if self.rx.last_ok else "väntar på adsb.lol")
+            else:
+                fart = f"{rate:.0f} meddelanden/s"
             self.status.set_text(f"{len(self.planes)} flygplan · {npos} med position · "
-                                 f"{rate:.0f} meddelanden/s" if self.rx.running else "Stoppad")
+                                 f"{fart}" if self.rx.running else "Stoppad")
             return True
 
         def toast(self, msg, timeout=4):
@@ -765,7 +775,7 @@ def run_gui(args):
 def main():
     p = argparse.ArgumentParser(prog="flygradar", description="Flygradar – ADS-B-mottagare med karta (Signalspanaren)")
     p.add_argument("--version", action="version", version=f"Flygradar (Signalspanaren {R.VERSION})")
-    p.add_argument("--kalla", dest="source", choices=SOURCES, help="mottagarkälla: rtl, tcp eller sim")
+    p.add_argument("--kalla", dest="source", choices=SOURCES, help="mottagarkälla: rtl, tcp, sim eller adsblol")
     p.add_argument("--simulator", action="store_true", help="samma som --kalla sim")
     p.add_argument("--tcp", metavar="VÄRD:PORT", help="anslut till en rtl_tcp-server")
     p.add_argument("--forstarkning", dest="gain", type=float, metavar="DB", help="förstärkning (standard 49,6 dB)")
