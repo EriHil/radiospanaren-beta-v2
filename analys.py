@@ -372,6 +372,12 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft):
         return float(f[k0]), 2 * half, kant
     a, b = _narrow_peak(Pd, res, a, b, k0)
     a, b = _split_valleys(Pd, res, a, b, k0, thr)
+    # 99 % av effekten (över bruset) inom signalen: en stark signals svaga kjolar (fasbrus, AGC) ligger
+    # långt över brusgolvet men bär nästan ingen effekt – de ska inte räknas in i bredden
+    ex = np.maximum(P[a:b + 1] - 10 ** (floor / 10), 0.0)
+    if ex.sum() > 0 and b - a >= 4 and andel < 0.3:           # inte när en bärvåg bär effekten (AM)
+        cs = np.cumsum(ex) / ex.sum()
+        a, b = a + int(np.searchsorted(cs, 0.005)), a + int(np.searchsorted(cs, 0.995))
     lo, hi = float(f[a]) - res / 2, float(f[b]) + res / 2
     return (lo + hi) / 2, hi - lo, kant
 
@@ -811,7 +817,11 @@ def lagbaud_mfsk(z, fs, f0=0.0):
         anv = np.bincount(p_, minlength=E.shape[1]) / len(p_)
         toner = int(np.count_nonzero(anv >= 0.03))
         spann = int(np.ptp(np.flatnonzero(anv >= 0.03)) + 1) if toner else 0
-        ok = renhet >= 0.45 and 2.0 <= langd <= 7.0 and 3 <= toner <= M + 1 and spann <= M + 2
+        # FT8/FT4 använder intilliggande toner (en per frekvenssteg) – 2-FSK med stort skift har två
+        # toner med ett tomt mellanrum och ska inte räknas (gav falsklarm på 50 Bd/200 Hz FSK och JT65)
+        sammanhang = toner >= 0.75 * spann if spann else False
+        ok = (renhet >= 0.45 and 2.0 <= langd <= 7.0 and 3 <= toner <= M + 1 and spann <= M + 2
+              and sammanhang)
         if ok and (bast is None or renhet > bast["renhet"]):
             bast = dict(namn=namn, baud=b, toner=M, fam=fam, renhet=renhet, symbol_hopp=langd,
                         toner_sedda=toner)

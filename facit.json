@@ -288,5 +288,62 @@
    3200
   ],
   "not": "Användarens exempel 2026-11-06: SSB-tal. Energi 7060,3–7062,5 kHz (USB-sidan av 7,060)."
+ },
+ {
+  "namn": "STANAG 4285 14722,5 kHz USB (svag)",
+  "frekvens": 14725300,
+  "fam": [
+   "PSK8",
+   "QPSK",
+   "BPSK",
+   "LIN"
+  ],
+  "bredd": [
+   2400,
+   3400
+  ],
+  "kandidat": "STANAG 4285",
+  "not": "Användarens exempel 2026-11-06 via SK5SM. Svag (3–4 dB). Ramperiod 106,68 ms (r 0,16) uppmätt trots låg SNR."
+ },
+ {
+  "namn": "PSK31 14072,4 kHz",
+  "frekvens": 14072398,
+  "fam": [
+   "BPSK",
+   "LIN"
+  ],
+  "bredd": [
+   40,
+   120
+  ],
+  "not": "Användarens tips 2026-11-06 (PSK31 runt 14070). Signal på 14072,40 kHz via SK5SM: ca 60–90 Hz, tydlig z²-linje (BPSK)."
+ },
+ {
+  "namn": "STANAG 4285 12736,8 kHz",
+  "frekvens": 12736792,
+  "fam": [
+   "PSK8",
+   "QPSK",
+   "BPSK",
+   "LIN"
+  ],
+  "bredd": [
+   2400,
+   3400
+  ],
+  "kandidat": "STANAG 4285",
+  "not": "Användaren kallade den FSK (12736,44). Mätt: ramperiod 106,67 ms (r 0,43) = STANAG 4285; en till 4285 på 12732,4 kHz."
+ },
+ {
+  "namn": "FSK 50 Bd / 200 Hz 9224,0 kHz",
+  "frekvens": 9224001,
+  "fam": [
+   "FSK2"
+  ],
+  "bredd": [
+   200,
+   500
+  ],
+  "not": "Användaren: okänd digital, 9223,26 kHz. Mätt (Linköping-Kiwi): toner 9223,902/9224,101 kHz (199 Hz), tonbyten 50,00 Hz."
  }
 ]
