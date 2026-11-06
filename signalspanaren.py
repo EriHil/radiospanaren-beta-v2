@@ -3102,7 +3102,7 @@ def run_gui(args):
 
             lat, lon, zoom = main.conf.get("ship_map_view", [59.33, 18.06, 9.0])
             self.mp = kartvy.MapPanel(center=(lat, lon), zoom=zoom or 9.0, on_select=self._select,
-                                      user_agent=f"Signalspanaren/{VERSION} (+https://github.com/EriHil/radiospanaren-beta-v2)",
+                                      user_agent=f"Signalspanaren/{VERSION} (+https://github.com/EriHil/signalspanaren)",
                                       toast=main.toast)
             left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             left.append(self.mp)

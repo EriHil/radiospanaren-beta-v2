@@ -35,8 +35,8 @@
     <category>AudioVideo</category>
     <category>HamRadio</category>
   </categories>
-  <url type="homepage">https://github.com/EriHil/radiospanaren-beta-v2</url>
-  <url type="bugtracker">https://github.com/EriHil/radiospanaren-beta-v2/issues</url>
+  <url type="homepage">https://github.com/EriHil/signalspanaren</url>
+  <url type="bugtracker">https://github.com/EriHil/signalspanaren/issues</url>
   <developer id="se.eh">
     <name>erihil</name>
   </developer>

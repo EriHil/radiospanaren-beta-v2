@@ -16,7 +16,7 @@ systempaketen är för gamla för det vanliga installationsskriptet.
 flatpak install flathub org.flatpak.Builder org.gnome.Platform//51 org.gnome.Sdk//51
 
 # Bygg och installera för den inloggade användaren
-cd radiospanaren-beta-v2
+cd signalspanaren
 flatpak run org.flatpak.Builder --user --install --force-clean \
     build-dir flatpak/se.eh.Signalspanaren.yaml
 
