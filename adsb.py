@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 erihil
 """
-ADS-B / Mode S-avkodare för Radiospanaren (1090 MHz, PPM 1 Mbit/s).
+ADS-B / Mode S-avkodare för Signalspanaren (1090 MHz, PPM 1 Mbit/s).
 
   • Mottagning med 2 MS/s (2 samples per bit), preambeldetektering i numpy
   • CRC-24 (polynom 0xFFF409) med rättning av enstaka bitfel för DF17/18
@@ -17,7 +17,7 @@ import logging
 
 import numpy as np
 
-log = logging.getLogger("radiospanaren")
+log = logging.getLogger("signalspanaren")
 
 ADSB_FREQ = 1090e6
 ADSB_RATE = 2_000_000

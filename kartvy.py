@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 erihil
 """
-Gemensam kartvy för Radiospanaren (används av fartygskartan).
+Gemensam kartvy för Signalspanaren (används av fartygskartan).
 
 MapPanel visar objekt (fartyg, flygplan, stationer) på en OpenStreetMap-karta via
 libshumate, med symbol i kursriktningen, etikett och spår. Saknas libshumate visas
@@ -21,14 +21,14 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Gdk, GLib   # noqa: E402
 
 try:
-    if os.environ.get("RADIOSPANAREN_UTAN_KARTA"):
+    if os.environ.get("SIGNALSPANAREN_UTAN_KARTA"):
         raise ImportError("avstängd för test")
     gi.require_version("Shumate", "1.0")
     from gi.repository import Shumate
 except (ValueError, ImportError):
     Shumate = None
 
-log = logging.getLogger("radiospanaren")
+log = logging.getLogger("signalspanaren")
 
 # Färger (r, g, b) per kategori
 COLORS = {
@@ -59,7 +59,7 @@ def map_install_cmd():
         txt = "sudo apt install gir1.2-shumate-1.0"
     else:
         return None, "installera libshumate med systemets pakethanterare"
-    if os.environ.get("RADIOSPANAREN_TORRKORNING"):
+    if os.environ.get("SIGNALSPANAREN_TORRKORNING"):
         return ["true"], txt
     if not shutil.which("pkexec"):
         return None, txt
@@ -179,7 +179,7 @@ class _Radar(Gtk.DrawingArea):
 
 
 class MapPanel(Gtk.Box):
-    def __init__(self, center=(59.33, 18.06), zoom=9.0, user_agent="Radiospanaren", on_select=None, toast=None):
+    def __init__(self, center=(59.33, 18.06), zoom=9.0, user_agent="Signalspanaren", on_select=None, toast=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, hexpand=True, vexpand=True)
         self.center = [center[0], center[1]]
         self.objects = {}
@@ -332,7 +332,7 @@ class MapPanel(Gtk.Box):
         _c, txt = map_install_cmd()
         dlg = Adw.AlertDialog(heading="Installera kartan?",
                               body=f"Kartan (libshumate) installeras med systemets pakethanterare ({txt}). "
-                                   "Du får ange ditt lösenord. Starta sedan om Radiospanaren.")
+                                   "Du får ange ditt lösenord. Starta sedan om Signalspanaren.")
         dlg.add_response("cancel", "Avbryt")
         dlg.add_response("install", "Installera")
         dlg.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
@@ -358,7 +358,7 @@ class MapPanel(Gtk.Box):
     def _installed(self, code, out):
         if code == 0:
             log.info("Kartan installerad")
-            self.bar_lbl.set_text("Kartan är installerad – starta om Radiospanaren för att visa den.")
+            self.bar_lbl.set_text("Kartan är installerad – starta om Signalspanaren för att visa den.")
             self.bar_btn.set_visible(False)
         else:
             if code in (126, 127):

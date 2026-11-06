@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 erihil
 """
-Aktivitetskarta för Radiospanaren.
+Aktivitetskarta för Signalspanaren.
 
 BandMonitor sveper ett frekvensband om och om igen med SDR:n och bygger en
 värmekarta: för varje svep mäts signalnivån över brusgolvet i ett rutnät av
@@ -19,7 +19,7 @@ from collections import deque
 
 import numpy as np
 
-import radiospanaren as R      # SR, FFT_N, BIN_HZ, bandplan m.m.
+import signalspanaren as R      # SR, FFT_N, BIN_HZ, bandplan m.m.
 
 # Färdiga band att välja mellan (från, till i MHz, namn, läge, kanalsteg kHz).
 # Inga myndighets-/blåljusband – det här är för allmän spektrumöversikt.

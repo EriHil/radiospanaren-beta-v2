@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-Signalanalys för Radiospanaren.
+Signalanalys för Signalspanaren.
 
   ChannelTap   körs i DSP-tråden: klipper ut en kanal kring en vald bärvåg,
                decimerar och gör vattenfallsrader för den lilla vyn.
@@ -17,7 +17,7 @@ import logging
 import math
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 
 import numpy as np
 from scipy.signal import firwin, upfirdn, find_peaks
@@ -25,7 +25,7 @@ from scipy.ndimage import gaussian_filter1d, uniform_filter1d
 
 import signaldb
 
-log = logging.getLogger("radiospanaren")
+log = logging.getLogger("signalspanaren")
 
 FAM_NAMN = {
     "BRUS": "Ingen signal / brus",
@@ -918,6 +918,30 @@ class Analyzer:
         self.signal_lock = None            # stabil signaltyp: {"namn", "post", "score", "last"}
         self._lock_top = None
         self._lock_top_n = 0
+        # Stabil signalfamilj: rå klassning varierar mellan mätningar (t.ex. FSK2 ↔ MFSK vid svag signal).
+        # Ny familj visas först när den setts FAM_BYT av de senaste FAM_FONSTER gångerna, brus efter FAM_BRUS.
+        self._fam_hist = deque(maxlen=self.FAM_FONSTER)
+        self._stable_fam = None
+
+    FAM_FONSTER = 5
+    FAM_BYT = 3
+    FAM_BRUS = 2
+
+    def _stabil_familj(self, feat):
+        """Byter feat["fam"]/["klass"] till den stabila familjen (hysteres mot hopp mellan mätningar)."""
+        raw = feat.get("fam")
+        self._fam_hist.append(raw)
+        most, cnt = Counter(self._fam_hist).most_common(1)[0]
+        if most == "BRUS":
+            if cnt >= self.FAM_BRUS:
+                self._stable_fam = "BRUS"
+        elif most != self._stable_fam and cnt >= self.FAM_BYT:
+            self._stable_fam = most
+        if self._stable_fam is not None and self._stable_fam != raw:
+            feat["fam_ra"] = raw                  # det den senaste mätningen själv sa
+            feat["fam"] = self._stable_fam
+            feat["klass"] = FAM_NAMN.get(self._stable_fam, feat["klass"])
+        return feat
 
     def start(self):
         if self._thr is None:
@@ -937,6 +961,8 @@ class Analyzer:
         self.signal_lock = None
         self._lock_top = None
         self._lock_top_n = 0
+        self._fam_hist.clear()
+        self._stable_fam = None
 
     def _lock_candidate(self, feat, ks, now):
         """Lås visningen till en stabil signaltyp i stället för att listan hoppar mellan likvärdiga förslag."""
@@ -995,6 +1021,7 @@ class Analyzer:
                 dd._ok_feat = None
                 dd._ptr = None
         feat = analyze(z, fs, bw)
+        self._stabil_familj(feat)
         f_abs = tgt + feat.get("f_mid", 0.0)
         feat["f_abs"] = f_abs
         feat["target"] = tgt
@@ -1059,7 +1086,7 @@ class Analyzer:
 
     def _loop(self):
         import logging
-        log = logging.getLogger("radiospanaren")
+        log = logging.getLogger("signalspanaren")
         while not self._stop.wait(0.35):
             if self.paused:
                 continue

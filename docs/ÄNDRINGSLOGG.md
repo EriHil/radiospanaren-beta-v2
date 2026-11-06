@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 2.8.0 (2026-11-06)
+
+- **Nytt namn: Signalspanaren** (tidigare Radiospanaren). Kommandot heter `signalspanaren`, och `radiospanaren` fungerar fortfarande. Inställningar, bokmärken, loggar, cache och inspelningsmappen flyttas automatiskt vid första start. Installationsskriptet tar bort den gamla installationen. Flatpak-ID:t är nu `se.eh.Signalspanaren`.
+- **Skärmanpassning**: programmet känner av skärmens upplösning. Fönstren får en storlek som ryms på skärmen, och på låga skärmar används ett kompakt läge (Visning → Skärmanpassning).
+- **Justerbar nedre panel**: en synlig list mellan vattenfallet och flikarna. Höjden sparas.
+- **Signalanalys**: inget klipps längre. Signaltypen står kvar medan klartexten rullar, och mätvärdena får den höjd de behöver. Signalfamiljen stabiliseras: en ny typ visas när den har setts 3 av de 5 senaste gångerna, och "ingen signal" efter 2.
+- Förkortade texter i sidopanelen visas nu hela. dB-skalan i spektrumet trängs inte ihop på låga skärmar, och fartygskartans färgförklaring radbryts.
+- Rättat: `frontpanel.py` saknades i installationsskriptet och i flatpak-paketet.
+
 ## 2.1.1 (2026-11-05)
 
 - **Flatpak: GNOME 51-körtid** i stället för GNOME 48, som nått slutet på sin livstid. GTK 4.24, libadwaita 1.10, Python 3.14, libshumate 1.5.5, numpy 2.5.4 och scipy 1.18.1.

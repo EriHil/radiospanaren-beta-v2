@@ -17,7 +17,7 @@ websdr.org:s egen lista används INTE: den får enligt PA3FWM inte återanvända
 i stället från receiverbook.
 
 Bara KiwiSDR (och KiwiSDR-kompatibla, t.ex. Web-888) kan användas som mottagarkälla i
-Radiospanaren – de andra öppnas i webbläsaren.
+Signalspanaren – de andra öppnas i webbläsaren.
 
 Live-status hämtas direkt från mottagaren: KiwiSDR /status (nyckel=värde) och
 OpenWebRX /status.json (namn, plats, GPS och frekvensprofiler).
@@ -36,9 +36,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-log = logging.getLogger("radiospanaren")
+log = logging.getLogger("signalspanaren")
 
-UA = "Radiospanaren (SDR-mottagare för Linux)"
+UA = "Signalspanaren (SDR-mottagare för Linux)"
 URL_KIWI = "http://rx.linkfanel.net/kiwisdr_com.js"
 URL_RB = "https://www.receiverbook.de/map"
 MAX_AGE = 6 * 3600
@@ -166,7 +166,7 @@ def _int(v):
 
 
 def kiwi_ok(r):
-    """Kan Radiospanaren ta emot från den här? (KiwiSDR som inte stängt ute andra program än webbläsaren)"""
+    """Kan Signalspanaren ta emot från den här? (KiwiSDR som inte stängt ute andra program än webbläsaren)"""
     return r["typ"] == "KiwiSDR" and r.get("ext_api") != 0
 
 

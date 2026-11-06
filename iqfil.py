@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-IQ-inspelning och uppspelning för Radiospanaren.
+IQ-inspelning och uppspelning för Signalspanaren.
 
 Skriva:
   SigMFWriter   .sigmf-data + .sigmf-meta (cu8 eller cf32). Varje omstämning blir en
@@ -66,7 +66,7 @@ class SigMFWriter:
         self.captures = [{"core:sample_start": 0, "core:frequency": float(center), "core:datetime": now_iso()}]
         self.annotations = []
         self.glob = {"core:datatype": datatype, "core:sample_rate": self.rate, "core:version": "1.0.0",
-                     "core:recorder": "Radiospanaren", "core:description": description}
+                     "core:recorder": "Signalspanaren", "core:description": description}
         if extra:
             self.glob.update(extra)
         self._write_meta()

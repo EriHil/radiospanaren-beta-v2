@@ -1,16 +1,16 @@
 ══════════════════════════════════════════════════════════════════════
-  RADIOSPANAREN – MANUAL                                   version 2.7.0
+  SIGNALSPANAREN – MANUAL                                   version 2.7.0
   SDR-mottagare, radioskanner och signallogg för Fedora
 ══════════════════════════════════════════════════════════════════════
 
-Radiospanaren använder en SDR (t.ex. RTL-SDR-dongel) som mottagare och
+Signalspanaren använder en SDR (t.ex. RTL-SDR-dongel) som mottagare och
 kombinerar:
   • spektrum + vattenfall och demodulering (som SDR++)
   • automatisk signallogg med filter (som WaveShark)
   • HF via direktsampling, bandplan, bokmärken och webbmottagare (som KiwiSDR)
   • skanner för bokmärken eller frekvensintervall
 
-Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
+Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
 
 
 ──────────────────────────────────────────────────────────────────────
@@ -19,80 +19,80 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
 
  Starta programmet
  ─────────────────
-  radiospanaren                     Starta med senaste inställningar
-  radiospanaren --start             Starta och börja ta emot direkt
-  radiospanaren --simulator         Använd simulatorn (testa utan SDR)
-  radiospanaren --kalla rtl         Välj källa: rtl, tcp, kiwi, sim eller file (IQ-fil)
-  radiospanaren --spela FIL         Spela upp en IQ-fil som mottagare (SigMF, WAV,
+  signalspanaren                     Starta med senaste inställningar
+  signalspanaren --start             Starta och börja ta emot direkt
+  signalspanaren --simulator         Använd simulatorn (testa utan SDR)
+  signalspanaren --kalla rtl         Välj källa: rtl, tcp, kiwi, sim eller file (IQ-fil)
+  signalspanaren --spela FIL         Spela upp en IQ-fil som mottagare (SigMF, WAV,
                                     .cu8, .cs8, .cs16, .cf32/.cfile)
   --takt 2048000 --mittfrekvens 145.5
                                     Samplingstakt/mittfrekvens för råa filer som
                                     saknar dem (annars tas de ur filnamnet)
-  radiospanaren --tcp 192.168.1.20:1234
+  signalspanaren --tcp 192.168.1.20:1234
                                     Anslut till en rtl_tcp-server
-  radiospanaren --kiwi http://sk5sm.proxy.kiwisdr.com:8073/ --frekvens 7074k
+  signalspanaren --kiwi http://sk5sm.proxy.kiwisdr.com:8073/ --frekvens 7074k
                                     Hämta I/Q från en KiwiSDR på nätet
-  radiospanaren --webbmottagare     Öppna listan över webbmottagare
-  radiospanaren --lista-webbmottagare sverige --position JO99bg
+  signalspanaren --webbmottagare     Öppna listan över webbmottagare
+  signalspanaren --lista-webbmottagare sverige --position JO99bg
                                     Skriv ut webbmottagare (sök: sverige, sk6ag,
                                     ort …) med avstånd, band och lyssnare
-  radiospanaren --frekvens 145.5    Startfrekvens (MHz om ingen enhet)
-  radiospanaren --frekvens 7074k    ... med enhet: Hz, k, M, G
-  radiospanaren --mod NFM           Modulering: WFM NFM AM USB LSB CW
-  radiospanaren --direktsampling q  HF under 28,8 MHz (q = Q-gren, rätt för
+  signalspanaren --frekvens 145.5    Startfrekvens (MHz om ingen enhet)
+  signalspanaren --frekvens 7074k    ... med enhet: Hz, k, M, G
+  signalspanaren --mod NFM           Modulering: WFM NFM AM USB LSB CW
+  signalspanaren --direktsampling q  HF under 28,8 MHz (q = Q-gren, rätt för
                                     NESDR SMArt v5 och RTL-SDR v3; i, av)
-  radiospanaren --acars             Slå på ACARS-avkodning (flygplan)
-  radiospanaren --ais               Slå på AIS-avkodning (fartyg)
-  radiospanaren --aprs              Slå på APRS-avkodning (144,800 MHz)
-  radiospanaren --flik avkodat      Visa fliken Avkodat (signallogg, bokmarken, analys)
-  radiospanaren --analysera 14.074  Analysera signalen på frekvensen i fliken
+  signalspanaren --acars             Slå på ACARS-avkodning (flygplan)
+  signalspanaren --ais               Slå på AIS-avkodning (fartyg)
+  signalspanaren --aprs              Slå på APRS-avkodning (144,800 MHz)
+  signalspanaren --flik avkodat      Visa fliken Avkodat (signallogg, bokmarken, analys)
+  signalspanaren --analysera 14.074  Analysera signalen på frekvensen i fliken
                                     Signalanalys (MHz om ingen enhet)
-  radiospanaren --fartygskarta      Öppna fartygskartan (AIS) direkt
-  radiospanaren --aktivitetskarta   Öppna aktivitetskartan direkt
-  radiospanaren --kalibrera         Öppna frekvenskalibreringen direkt
-  radiospanaren --squelch -15       Squelchnivå i dB
-  radiospanaren --webb              Starta webbgränssnittet (port 8073)
-  radiospanaren --webb 9000         ... på en annan port
-  radiospanaren --debug             Detaljerad loggning, även i terminalen
+  signalspanaren --fartygskarta      Öppna fartygskartan (AIS) direkt
+  signalspanaren --aktivitetskarta   Öppna aktivitetskartan direkt
+  signalspanaren --kalibrera         Öppna frekvenskalibreringen direkt
+  signalspanaren --squelch -15       Squelchnivå i dB
+  signalspanaren --webb              Starta webbgränssnittet (port 8073)
+  signalspanaren --webb 9000         ... på en annan port
+  signalspanaren --debug             Detaljerad loggning, även i terminalen
 
   Skanner från terminalen
   ───────────────────────
-  radiospanaren --skanna bokmarken  Starta mottagning + bokmärkesskanning
-  radiospanaren --skanna intervall --intervall 118-137 --kanalsteg 25
+  signalspanaren --skanna bokmarken  Starta mottagning + bokmärkesskanning
+  signalspanaren --skanna intervall --intervall 118-137 --kanalsteg 25
                                     Skanna ett intervall (MHz) med kanalsteg (kHz)
   --vantetid 2                      Sekunder att stanna efter att signalen tystnat
   --max-lyssning 10                 Lämna en signal efter högst 10 s (0 = av)
 
   Flaggorna kan kombineras, t.ex.:
-    radiospanaren --frekvens 121.5 --mod AM --start
-    radiospanaren --mod AM --skanna intervall --intervall 225-400 --kanalsteg 25 --snr 8
+    signalspanaren --frekvens 121.5 --mod AM --start
+    signalspanaren --mod AM --skanna intervall --intervall 225-400 --kanalsteg 25 --snr 8
                                     (--snr = dB över brusgolvet; --squelch = använd squelch-reglaget)
-    radiospanaren --frekvens 131.725 --mod AM --acars --start
-    radiospanaren --frekvens 161.975 --mod NFM --ais --start --flik avkodat
-    radiospanaren --frekvens 161.975 --mod NFM --ais --start --fartygskarta
-    radiospanaren --frekvens 144.8 --mod NFM --aprs --start
-    radiospanaren --direktsampling q --frekvens 14.074 --mod USB --start
-    radiospanaren --simulator --frekvens 131.725 --mod AM --acars --start   (test-ACARS)
-    radiospanaren --spela ~/Musik/Radiospanaren/inspelning.sigmf-meta --start
+    signalspanaren --frekvens 131.725 --mod AM --acars --start
+    signalspanaren --frekvens 161.975 --mod NFM --ais --start --flik avkodat
+    signalspanaren --frekvens 161.975 --mod NFM --ais --start --fartygskarta
+    signalspanaren --frekvens 144.8 --mod NFM --aprs --start
+    signalspanaren --direktsampling q --frekvens 14.074 --mod USB --start
+    signalspanaren --simulator --frekvens 131.725 --mod AM --acars --start   (test-ACARS)
+    signalspanaren --spela ~/Musik/Signalspanaren/inspelning.sigmf-meta --start
 
  Felsökning och hjälp
  ────────────────────
-  radiospanaren --rapport           Skriv ut en felrapport (system,
+  signalspanaren --rapport           Skriv ut en felrapport (system,
                                     versioner, SDR, senaste loggrader).
                                     Klistra in den i Claude Code.
-  radiospanaren --fel               Visa bara fel och varningar ur loggen
-  radiospanaren --logg              Visa de senaste 100 loggraderna
-  radiospanaren --logg 500          Visa de senaste 500 loggraderna
-  radiospanaren --sjalvtest         Testa signalbehandlingen med simulatorn
+  signalspanaren --fel               Visa bara fel och varningar ur loggen
+  signalspanaren --logg              Visa de senaste 100 loggraderna
+  signalspanaren --logg 500          Visa de senaste 500 loggraderna
+  signalspanaren --sjalvtest         Testa signalbehandlingen med simulatorn
                                     (utan fönster). Ska sluta med "OK".
-  radiospanaren --sokvagar          Visa var alla filer ligger
-  radiospanaren --skarmbild FIL 10  Spara en skärmbild av fönstret efter 10 s
-  radiospanaren --panel r9500        Öppna frontpanelen direkt (r9500, r7100, r2500)
-  radiospanaren --rensa-logg        Töm loggfilerna
-  radiospanaren --aterstall         Återställ alla inställningar
+  signalspanaren --sokvagar          Visa var alla filer ligger
+  signalspanaren --skarmbild FIL 10  Spara en skärmbild av fönstret efter 10 s
+  signalspanaren --panel r9500        Öppna frontpanelen direkt (r9500, r7100, r2500)
+  signalspanaren --rensa-logg        Töm loggfilerna
+  signalspanaren --aterstall         Återställ alla inställningar
                                     (gamla sparas som config.json.bak)
-  radiospanaren --manual            Visa den här manualen
-  radiospanaren --version           Visa version
+  signalspanaren --manual            Visa den här manualen
+  signalspanaren --version           Visa version
 
  Flygradar (ADS-B med karta) – eget program
  ──────────────────────────────────────────
@@ -104,13 +104,13 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   flygradar --sjalvtest             Testa ADS-B-avkodaren (utan fönster)
   flygradar --skarmbild FIL 10      Spara en skärmbild efter 10 s
   Flygradar kan också startas med knappen "✈ Öppna Flygradar" i
-  Radiospanaren (sidopanelen → Avkodare) eller från programmenyn.
-  radiospanaren --help              Kort lista över alla flaggor
+  Signalspanaren (sidopanelen → Avkodare) eller från programmenyn.
+  signalspanaren --help              Kort lista över alla flaggor
 
  Få hjälp av Claude Code
  ───────────────────────
   Inne i Claude Code kan du skriva (med utropstecken först):
-      ! radiospanaren --rapport
+      ! signalspanaren --rapport
   så hamnar rapporten direkt i samtalet. Eller använd knappen
   "Kopiera felrapport" i programmet (Felsökning) och klistra in.
 
@@ -263,7 +263,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   Knappar: bandbredd (Auto = signalens egen bredd), "Följ inställd" (analysera
   alltid demodulatorns kanal), "🎧 Lyssna" (ställer in demodulatorn på
   signalen med lämplig modulering), rensa, kopiera mätvärden och ⧉ eget fönster.
-  Egna signaltyper: lägg en lista i ~/.config/radiospanaren/signaler.json, t.ex.
+  Egna signaltyper: lägg en lista i ~/.config/signalspanaren/signaler.json, t.ex.
     [{"namn": "Min fyr", "kat": "egen", "mod": ["OOK"], "bw": 100,
       "f": [[3.5, 3.6]], "info": "Lokal fyr"}]
   (fälten beskrivs överst i signaldb.py). Simulatorn har testsignaler på
@@ -274,7 +274,19 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
  Utseende
   Visning → Utseende: "Spanare" (mörk marin med bärnstensfärgade detaljer och
   ny färgskala) eller "Klassisk". Tema: mörkt, ljust eller följ systemet.
-  Egen CSS kan läggas i ~/.config/radiospanaren/style.css.
+  Egen CSS kan läggas i ~/.config/signalspanaren/style.css.
+
+ Skärmanpassning
+  Programmet känner av upplösningen på skärmen det visas på:
+  - Fönstret startar i en storlek som ryms på skärmen (maximerat på skärmar
+    mindre än 1440×900). Alla andra fönster (kartor, frontpaneler,
+    webbmottagare …) krymps vid behov så att de ryms.
+  - Kompakt läge (tätare rader och flikar) på skärmar lägre än 900 punkter.
+    Byts automatiskt om fönstret flyttas till en annan skärm.
+  - Visning → Skärmanpassning: Automatiskt, Normal eller Kompakt. Raden visar
+    vilken upplösning som känts av.
+  - Panelen under vattenfallet (Signallogg … Signalanalys) ändras i höjd med
+    listen ovanför flikarna. Höjden sparas till nästa start.
 
  Frontpaneler
   Sidopanelen → "Frontpanel" har tre val: Mottagare 1, 2 och 3.
@@ -354,7 +366,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   Squawk 7500/7600/7700 (kapning/radiofel/nödläge) visas i rött med en varning.
   Knappen "ft" byter mellan fot och meter, "Visa alla" zoomar till alla plan.
   Dongeln kan bara användas av ett program åt gången: när Flygradar startas
-  från Radiospanaren stoppas mottagningen där först.
+  från Signalspanaren stoppas mottagningen där först.
   Kartan kräver libshumate. Saknas den visas en enkel radarvy och knappen
   "Installera kartan" (frågar efter ditt lösenord och startar sedan om).
   Kartrutorna hämtas från OpenStreetMap och kräver internet.
@@ -379,7 +391,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
                         Dubbelklicka på ett meddelande för alla detaljer och
                         "Visa på karta" (öppnar OpenStreetMap) när det finns
                         en position.
-                        Sparas också i ~/.local/state/radiospanaren/avkodat.jsonl
+                        Sparas också i ~/.local/state/signalspanaren/avkodat.jsonl
   Signalloggen känner igen kända signaltyper på frekvensen, t.ex. ACARS, VDL2,
   AIS, APRS, ADS-B, nödfrekvenserna 121,5/243,0, PMR446, vädersatelliter,
   FT8, UVB-76, militärflyg UHF och Rakel/TETRA. Övertoner av dongelns kristall
@@ -403,11 +415,11 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
     • WAV 16 bitar (ca 6 MB/s) – samma format som SDR++ och SDR#
       (baseband_<frekvens>Hz_<tid>_<datum>.wav). Vid omstämning börjar en
       ny fil.
-  Filerna hamnar i ~/Musik/Radiospanaren (eller ~/Radiospanaren).
+  Filerna hamnar i ~/Musik/Signalspanaren (eller ~/Signalspanaren).
 
  KiwiSDR (webb-SDR på nätet)
   KiwiSDR är kortvågsmottagare (0–30 MHz) som folk ställer ut på nätet och
-  som man kan surfa in på. Radiospanaren kan hämta I/Q direkt från en sådan,
+  som man kan surfa in på. Signalspanaren kan hämta I/Q direkt från en sådan,
   så att vattenfall, demodulering, avkodare, Signalanalys och inspelning
   fungerar som med en egen dongel – med Kiwins antenn, var den än står.
   Välj Källa → "KiwiSDR (webb-SDR på nätet)", klistra in webbadressen (t.ex.
@@ -418,7 +430,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   Sidopanelen → Mottagare → "🌐 Webbmottagare på nätet …" visar ca 1 500
   mottagare: KiwiSDR, OpenWebRX och WebSDR. Listorna hämtas från
   kiwisdr.com (via rx.linkfanel.net) och receiverbook.de, högst var 6:e
-  timme (cache i ~/.cache/radiospanaren). Dessutom finns en inbyggd svensk
+  timme (cache i ~/.cache/signalspanaren). Dessutom finns en inbyggd svensk
   lista: SA0BMC:s "Länktips till SDR-mottagare" (sa0bmc.se) och SK6AG:s
   mottagare, varav flera inte finns i de publika listorna.
   • Sök på namn, ort eller anropssignal. Filtrera på typ, grupp (Sverige,
@@ -432,7 +444,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
     Ligger frekvensen över 30 MHz stäms den till 7,074 MHz USB.
   • "Bara webbläsare": ägaren har stängt Kiwin för andra program än
     webbläsaren (ext_api=0, gäller t.ex. flera av SK6AG:s). Kiwin släpper
-    då in Radiospanaren men kastar ut den efter ca 10 s.
+    då in Signalspanaren men kastar ut den efter ca 10 s.
   • "🔒 lösenord krävs": "Använd" frågar efter lösenordet.
   • OpenWebRX och WebSDR kan bara öppnas i webbläsaren (🌐) – de skickar
     färdigt ljud, inte I/Q.
@@ -483,8 +495,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   Kräver GTK 4.12+ och libadwaita 1.5+, dvs. Fedora 40+, Ubuntu 24.04+,
   Linux Mint 22+ eller Debian 13+. (Ubuntu 22.04 / Mint 21 är för gamla.)
 
-    tar xzf radiospanaren-2.0.0.tar.gz
-    cd radiospanaren-2.0.0
+    tar xzf signalspanaren-2.0.0.tar.gz
+    cd signalspanaren-2.0.0
     ./installera.sh
 
   Skriptet installerar saknade paket (apt eller dnf, frågar först),
@@ -492,30 +504,30 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   kontrollerar SDR-drivrutinen och kör ett självtest.
     ./installera.sh --avinstallera          ta bort programmet
     ./installera.sh --avinstallera --allt   ... även inställningar och loggar
-  Installationsskriptet finns också i ~/.local/share/radiospanaren/.
+  Installationsskriptet finns också i ~/.local/share/signalspanaren/.
 
 
 ──────────────────────────────────────────────────────────────────────
  4. FILER
 ──────────────────────────────────────────────────────────────────────
-  ~/.local/share/radiospanaren/radiospanaren.py   programmet
-  ~/.local/share/radiospanaren/avkodare.py        avkodare och signalidentifiering
-  ~/.local/share/radiospanaren/adsb.py            ADS-B-avkodare
-  ~/.local/share/radiospanaren/kartvy.py          gemensam kartvy (fartygskartan)
-  ~/.local/share/radiospanaren/aktivitet.py       aktivitetskartans bandsvep
-  ~/.local/share/radiospanaren/adsb_karta.py      Flygradar (eget program)
+  ~/.local/share/signalspanaren/signalspanaren.py   programmet
+  ~/.local/share/signalspanaren/avkodare.py        avkodare och signalidentifiering
+  ~/.local/share/signalspanaren/adsb.py            ADS-B-avkodare
+  ~/.local/share/signalspanaren/kartvy.py          gemensam kartvy (fartygskartan)
+  ~/.local/share/signalspanaren/aktivitet.py       aktivitetskartans bandsvep
+  ~/.local/share/signalspanaren/adsb_karta.py      Flygradar (eget program)
   ~/.local/bin/flygradar                          startkommando för Flygradar
-  ~/.config/radiospanaren/flygradar.json          Flygradars inställningar
-  ~/.local/share/radiospanaren/MANUAL.txt         den här manualen
-  ~/.local/bin/radiospanaren                      startkommandot
-  ~/.config/radiospanaren/config.json             inställningar, bokmärken
-  ~/.config/radiospanaren/style.css               egen stil (valfri, se nedan)
-  ~/.local/state/radiospanaren/radiospanaren.log  logg (fel, händelser)
-  ~/.local/state/radiospanaren/stderr.log         felutskrifter från GTK m.m.
-  ~/.local/state/radiospanaren/felrapport.txt     senaste felrapporten
+  ~/.config/signalspanaren/flygradar.json          Flygradars inställningar
+  ~/.local/share/signalspanaren/MANUAL.txt         den här manualen
+  ~/.local/bin/signalspanaren                      startkommandot
+  ~/.config/signalspanaren/config.json             inställningar, bokmärken
+  ~/.config/signalspanaren/style.css               egen stil (valfri, se nedan)
+  ~/.local/state/signalspanaren/signalspanaren.log  logg (fel, händelser)
+  ~/.local/state/signalspanaren/stderr.log         felutskrifter från GTK m.m.
+  ~/.local/state/signalspanaren/felrapport.txt     senaste felrapporten
 
  Ändra utseendet
-  Skapa ~/.config/radiospanaren/style.css med GTK-CSS, t.ex.:
+  Skapa ~/.config/signalspanaren/style.css med GTK-CSS, t.ex.:
       .freq-entry { color: #ffb000; font-size: 20pt; }
   Starta om programmet. Vattenfallets färgskala väljs i sidopanelen
   (Visning → Färgskala).
@@ -531,7 +543,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
       Stäng det. Om DVB-drivrutinen är laddad:  sudo modprobe -r dvb_usb_rtl28xxu
   Inget ljud
       Kontrollera att squelch inte är för hög och att volymen > 0.
-      Ljudet går via PipeWire (pacat/pw-cat). Se  radiospanaren --fel
+      Ljudet går via PipeWire (pacat/pw-cat). Se  signalspanaren --fel
   Fel frekvens / signalen ligger lite bredvid
       Ställ in "Frekvenskorrigering (ppm)". Mät med  rtl_test -p
   Vattenfallet är helt svart eller helt vitt
@@ -540,4 +552,4 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
       Se Felsökning → Prestanda. Många "överskridanden" betyder att
       datorn inte hinner med; stäng andra tunga program.
   Något annat
-      Kör  radiospanaren --rapport  och klistra in resultatet i Claude Code.
+      Kör  signalspanaren --rapport  och klistra in resultatet i Claude Code.

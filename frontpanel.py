@@ -1,4 +1,4 @@
-"""Frontpaneler för Radiospanaren.
+"""Frontpaneler för Signalspanaren.
 
 Riktiga reglage och utseende från tre mottagarpaneler. Allt
 som går att trycka på eller vrida på styr den körande mottagaren – ingen
@@ -24,7 +24,7 @@ from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 import cairo  # noqa: E402
 import numpy as np  # noqa: E402
 
-log = logging.getLogger("radiospanaren")
+log = logging.getLogger("signalspanaren")
 
 MODELS = {
     "r9500": {

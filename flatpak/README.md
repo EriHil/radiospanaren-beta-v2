@@ -1,9 +1,13 @@
-# Radiospanaren som Flatpak
+# Signalspanaren som Flatpak
 
 Flatpak-paketet kör på i stort sett alla Linux-distributioner, oavsett systemets
 GTK-version, eftersom det tar med egna bibliotek (GTK 4, libadwaita, libshumate,
 librtlsdr, numpy, scipy). Bra för t.ex. äldre Ubuntu/Debian/Mint där
 systempaketen är för gamla för det vanliga installationsskriptet.
+
+> Programmet hette tidigare Radiospanaren (`se.eh.Radiospanaren`). Det nya ID:t `se.eh.Signalspanaren` är ett eget
+> flatpak-program. Ta bort det gamla med `flatpak uninstall --user se.eh.Radiospanaren`. Inställningarna i
+> `~/.var/app/se.eh.Radiospanaren` följer inte med automatiskt, men kan kopieras till `~/.var/app/se.eh.Signalspanaren`.
 
 ## Bygga
 
@@ -14,26 +18,26 @@ flatpak install flathub org.flatpak.Builder org.gnome.Platform//51 org.gnome.Sdk
 # Bygg och installera för den inloggade användaren
 cd radiospanaren-beta-v2
 flatpak run org.flatpak.Builder --user --install --force-clean \
-    build-dir flatpak/se.eh.Radiospanaren.yaml
+    build-dir flatpak/se.eh.Signalspanaren.yaml
 
 # Kör
-flatpak run se.eh.Radiospanaren
+flatpak run se.eh.Signalspanaren
 ```
 
-Flygradar (ADS-B): `flatpak run --command=flygradar se.eh.Radiospanaren`
+Flygradar (ADS-B): `flatpak run --command=flygradar se.eh.Signalspanaren`
 (eller knappen i programmet). Simulator utan dongel:
-`flatpak run se.eh.Radiospanaren --simulator --start`.
+`flatpak run se.eh.Signalspanaren --simulator --start`.
 
 ## Ett delbart paket (en fil)
 
 ```sh
 flatpak run org.flatpak.Builder --user --force-clean --repo=repo \
-    build-dir flatpak/se.eh.Radiospanaren.yaml
-flatpak build-bundle repo radiospanaren.flatpak se.eh.Radiospanaren
+    build-dir flatpak/se.eh.Signalspanaren.yaml
+flatpak build-bundle repo signalspanaren.flatpak se.eh.Signalspanaren
 ```
 
-Filen `radiospanaren.flatpak` installeras på en annan dator med:
-`flatpak install --user radiospanaren.flatpak`.
+Filen `signalspanaren.flatpak` installeras på en annan dator med:
+`flatpak install --user signalspanaren.flatpak`.
 
 ## Behörigheter
 

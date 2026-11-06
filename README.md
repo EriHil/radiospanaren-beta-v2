@@ -1,8 +1,10 @@
-# Radiospanaren beta v2
+# Signalspanaren beta v2
 
 **SDR-mottagare, radioskanner, signallogg, avkodare (ACARS, AIS, ADS-B, APRS) och spektrumanalys för Linux – på svenska.**
 
-Radiospanaren gör en billig RTL-SDR-dongel till en komplett mottagarstation med grafiskt gränssnitt. Programmet kombinerar idéer från SDR++ (spektrum, vattenfall, demodulering), WaveShark (automatisk signallogg med filter) och KiwiSDR (bandplan, HF, webbmottagare) med en riktig radioskanner och avkodare för ACARS, AIS och APRS.
+Signalspanaren gör en billig RTL-SDR-dongel till en komplett mottagarstation med grafiskt gränssnitt. Programmet kombinerar idéer från SDR++ (spektrum, vattenfall, demodulering), WaveShark (automatisk signallogg med filter) och KiwiSDR (bandplan, HF, webbmottagare) med en riktig radioskanner och avkodare för ACARS, AIS och APRS.
+
+> **Nytt namn:** programmet hette tidigare *Radiospanaren*. Från version 2.8.0 heter det Signalspanaren. Kör `./installera.sh` igen. Den gamla installationen tas då bort, och inställningar, bokmärken, loggar och inspelningar flyttas automatiskt vid första start. Kommandot `radiospanaren` fungerar fortfarande.
 
 > **Beta v2:** Programmet fungerar och är testat, men det är tidig programvara. Den här versionen samlar allt: mottagare och skanner, signallogg, avkodare för ACARS, AIS och APRS, **Flygradar (ADS-B med karta)**, **fartygskarta (AIS)** och **aktivitetskarta (spektrumanalys)**. Se [Status och kända begränsningar](#status-och-kända-begränsningar).
 
@@ -35,7 +37,7 @@ Radiospanaren gör en billig RTL-SDR-dongel till en komplett mottagarstation med
 **Signalanalys** (ny i 2.2, fler avkodare i 2.3)
 - Klicka på en bärvåg i vattenfallet, så visas den i fliken *Signalanalys* (eller i ett eget fönster). Där finns ett litet vattenfall som täcker kanalen och en ruta med mätvärdena: signaltyp, mittfrekvens, SNR, bandbredd, symboltakt, shift, antal toner, deviation, modulationsgrad, CTCSS och en bedömning av trafiken.
 - Modulationsigenkänning: bärvåg, CW/OOK, AM, FM, SSB, 2/4-FSK, MFSK, MSK, BPSK, QPSK, 8PSK, linjär PSK/QAM och parallelltonmodem/OFDM. Diagrammet byter efter typ: konstellation, frekvensfördelning, envelop eller tonspektrum.
-- Jämför med en signaldatabas (`signaldb.py`, egna tillägg i `~/.config/radiospanaren/signaler.json`), även militära datavågformer: STANAG 4285/4529/4539, MIL-STD-188-110, Link 11 CLEW/SLEW, ALE (MIL-STD-188-141), ANDVT, marinens FSK-sändningar. Igenkänningen gäller vågformen. Krypterad trafik kan identifieras men inte läsas.
+- Jämför med en signaldatabas (`signaldb.py`, egna tillägg i `~/.config/signalspanaren/signaler.json`), även militära datavågformer: STANAG 4285/4529/4539, MIL-STD-188-110, Link 11 CLEW/SLEW, ALE (MIL-STD-188-141), ANDVT, marinens FSK-sändningar. Igenkänningen gäller vågformen. Krypterad trafik kan identifieras men inte läsas.
 - Avkodar direkt i analysen: RTTY (Baudot), Morse, **NAVTEX/SITOR-B**, **POCSAG**, **ALE 2G (MIL-STD-188-141)**, **väderfax** (bilden visas och kan sparas som PNG) och **DMR-identifiering** (färgkod, grupp/ID, krypterat eller inte). Avkodaren väljs automatiskt eller tvingas fram. Hela meddelanden hamnar även i fliken Avkodat. Nya avkodare läggs till i `analysavkodare.py`.
 
 ![Signalanalys av RTTY i simulatorn](docs/bilder/signalanalys-rtty.png)
@@ -65,7 +67,7 @@ Bara meddelanden med korrekt kontrollsumma (CRC) visas. Positioner kan öppnas p
 
 ![Fartygskarta](docs/bilder/fartygskarta.png)
 
-**Flygradar** (eget program, startas från Radiospanaren eller med `flygradar`)
+**Flygradar** (eget program, startas från Signalspanaren eller med `flygradar`)
 - Visar flygplanen i närheten på en OpenStreetMap-karta (libshumate), med kursriktning, höjdfärg och spår.
 - Avkodar Mode S och ADS-B: DF17/18, DF11 och DF4/5/20/21. CRC-24 med rättning av enstaka bitfel, och CPR-positionsavkodning (global och lokal).
 - Varnar för nödkoderna 7500, 7600 och 7700. Saknas kartan kan den installeras med en knapp.
@@ -77,7 +79,7 @@ Bara meddelanden med korrekt kontrollsumma (CRC) visas. Positioner kan öppnas p
 - IQ-inspelning av hela bandet (1,5 MHz) som SigMF (cu8/cf32) eller WAV (SDR++/SDR#-format). Omstämningar under inspelningen sparas.
 - Uppspelning av IQ-filer som mottagarkälla: SigMF, WAV, rtl_sdr `.cu8`, `.cs8`, `.cs16`, `.cf32`/`.cfile` och gqrx. Paus, spolning, 1–8× eller maxfart, slinga. Andra samplingstakter räknas om automatiskt. Allt fungerar på filen: avkodare, signalanalys, skanner och signallogg.
 - Webbgränssnitt (KiwiSDR-liknande): vattenfall, inställning och ljud i webbläsaren på `http://127.0.0.1:8073/`.
-- Loggfil och knappen "Kopiera felrapport" (eller `radiospanaren --rapport`), som ger en rapport att klistra in när du ber om hjälp.
+- Loggfil och knappen "Kopiera felrapport" (eller `signalspanaren --rapport`), som ger en rapport att klistra in när du ber om hjälp.
 - Fullständig kommandorad för start, skanning, avkodning, självtest och felsökning.
 
 ## Krav
@@ -97,7 +99,7 @@ cd radiospanaren-beta-v2
 Skriptet gör följande:
 - installerar saknade paket med `apt` eller `dnf` (frågar först)
 - kontrollerar versionerna
-- kopierar programmet till `~/.local/share/radiospanaren`
+- kopierar programmet till `~/.local/share/signalspanaren`
 - skapar genvägar i programmenyn och på skrivbordet
 - kontrollerar att DVB-drivrutinen är blockerad och att du har åtkomst till dongeln
 - kör ett självtest
@@ -111,24 +113,24 @@ finns ett Flatpak-paket som tar med egna bibliotek. Se [flatpak/README.md](flatp
 
 ```bash
 flatpak install flathub org.flatpak.Builder org.gnome.Platform//51 org.gnome.Sdk//51
-flatpak run org.flatpak.Builder --user --install --force-clean build-dir flatpak/se.eh.Radiospanaren.yaml
-flatpak run se.eh.Radiospanaren
+flatpak run org.flatpak.Builder --user --install --force-clean build-dir flatpak/se.eh.Signalspanaren.yaml
+flatpak run se.eh.Signalspanaren
 ```
 
 ## Kom igång
 
 ```bash
-radiospanaren                                          # starta
-radiospanaren --simulator --start                      # prova utan dongel
-radiospanaren --frekvens 161.975 --mod NFM --ais --start --flik avkodat      # fartyg (AIS)
-radiospanaren --frekvens 131.725 --mod AM --acars --start                    # flygplan (ACARS)
-radiospanaren --mod AM --skanna intervall --intervall 118-137 --kanalsteg 25 --squelch -15
-radiospanaren --direktsampling q --frekvens 14.074 --mod USB --start         # HF, FT8 på 20 m
+signalspanaren                                          # starta
+signalspanaren --simulator --start                      # prova utan dongel
+signalspanaren --frekvens 161.975 --mod NFM --ais --start --flik avkodat      # fartyg (AIS)
+signalspanaren --frekvens 131.725 --mod AM --acars --start                    # flygplan (ACARS)
+signalspanaren --mod AM --skanna intervall --intervall 118-137 --kanalsteg 25 --squelch -15
+signalspanaren --direktsampling q --frekvens 14.074 --mod USB --start         # HF, FT8 på 20 m
 flygradar --start                                      # flygplan på karta (ADS-B)
-radiospanaren --frekvens 161.975 --mod NFM --ais --start --fartygskarta   # fartyg på karta (AIS)
-radiospanaren --aktivitetskarta                        # värmekarta över ett band
-radiospanaren --sjalvtest                              # testa signalbehandling och avkodare
-radiospanaren --manual                                 # hela manualen
+signalspanaren --frekvens 161.975 --mod NFM --ais --start --fartygskarta   # fartyg på karta (AIS)
+signalspanaren --aktivitetskarta                        # värmekarta över ett band
+signalspanaren --sjalvtest                              # testa signalbehandling och avkodare
+signalspanaren --manual                                 # hela manualen
 ```
 
 Hela manualen, med alla kommandon, filtersyntax, mus och tangenter, filer och vanliga problem, finns i [MANUAL.txt](MANUAL.txt).
@@ -161,10 +163,10 @@ Testat på Fedora 45 (KDE) med en Nooelec NESDR SMArt v5 (R820T) och i rena Ubun
 
 ## Felrapporter
 
-Kör `radiospanaren --rapport` eller tryck **Felsökning → Kopiera felrapport** i programmet. Rapporten innehåller systeminformation och de senaste loggraderna. Klistra in den i en [issue](https://github.com/EriHil/radiospanaren-beta-v2/issues).
+Kör `signalspanaren --rapport` eller tryck **Felsökning → Kopiera felrapport** i programmet. Rapporten innehåller systeminformation och de senaste loggraderna. Klistra in den i en [issue](https://github.com/EriHil/radiospanaren-beta-v2/issues).
 
 ## Licens
 
-Copyright © 2026 erihil. Radiospanaren är fri programvara under **GNU General Public License v3.0 eller senare**, se [LICENSE](LICENSE).
+Copyright © 2026 erihil. Signalspanaren är fri programvara under **GNU General Public License v3.0 eller senare**, se [LICENSE](LICENSE).
 
 Programmet är skrivet med hjälp av [Claude Code](https://claude.com/claude-code).

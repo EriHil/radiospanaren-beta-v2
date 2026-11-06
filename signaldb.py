@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-Signaldatabas för Radiospanarens signalanalys.
+Signaldatabas för Signalspanarens signalanalys.
 
 Varje post beskriver de *publicerade* tekniska kännetecknen för en signaltyp
 (modulation, symboltakt, shift, antal toner, bandbredd, typiska frekvenser).
@@ -9,7 +9,7 @@ Analysen mäter samma storheter och jämför – det är igenkänning av vågfor
 inte avkodning av innehållet. Många militära vågformer är krypterade på
 länknivå och går inte att läsa; de kan bara identifieras.
 
-Lägg till egna poster i ~/.config/radiospanaren/signaler.json (samma fält,
+Lägg till egna poster i ~/.config/signalspanaren/signaler.json (samma fält,
 en lista med objekt) – de läses in automatiskt.
 
 Fält:
@@ -150,7 +150,7 @@ def load(user_file=None):
                 out.append(e)
         except Exception as ex:      # en trasig användarfil får inte stoppa programmet
             import logging
-            logging.getLogger("radiospanaren").error("Kunde inte läsa %s: %s", user_file, ex)
+            logging.getLogger("signalspanaren").error("Kunde inte läsa %s: %s", user_file, ex)
     return out
 
 

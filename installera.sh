@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 erihil
 # ════════════════════════════════════════════════════════════════════
-#  Installerar Radiospanaren för den inloggade användaren.
+#  Installerar Signalspanaren för den inloggade användaren.
 #  Fungerar på Fedora 40+, Ubuntu 24.04+, Linux Mint 22+ och Debian 13+.
 #
 #    ./installera.sh                 installera (frågar innan paket installeras)
@@ -13,16 +13,18 @@
 # ════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-APP_ID="se.eh.Radiospanaren"
+APP_ID="se.eh.Signalspanaren"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
-DEST="$DATA/radiospanaren"
+DEST="$DATA/signalspanaren"
 BIN="$HOME/.local/bin"
 APPS="$DATA/applications"
 ICONS="$DATA/icons/hicolor/scalable/apps"
-CONF="${XDG_CONFIG_HOME:-$HOME/.config}/radiospanaren"
-STATE="${XDG_STATE_HOME:-$HOME/.local/state}/radiospanaren"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/signalspanaren"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/signalspanaren"
 DESKTOP_DIR="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
+OLD_ID="se.eh.Radiospanaren"        # programmet hette Radiospanaren före 2.8.0
+OLD_DEST="$DATA/radiospanaren"
 
 JA=0; UTAN_PAKET=0; AVINSTALLERA=0; ALLT=0
 for a in "$@"; do
@@ -50,16 +52,16 @@ fraga() {  # fraga "text" → 0 om ja
 # ── Avinstallation ──────────────────────────────────────────────────
 if [ "$AVINSTALLERA" = 1 ]; then
   rm -rf "$DEST"
-  rm -f "$BIN/radiospanaren" "$BIN/flygradar" "$APPS/$APP_ID.desktop" "$APPS/$APP_ID.Flygradar.desktop" \
-        "$ICONS/$APP_ID.svg" "$DESKTOP_DIR/Radiospanaren.desktop"
+  rm -f "$BIN/signalspanaren" "$BIN/radiospanaren" "$BIN/flygradar" "$APPS/$APP_ID.desktop" "$APPS/$APP_ID.Flygradar.desktop" \
+        "$ICONS/$APP_ID.svg" "$DESKTOP_DIR/Signalspanaren.desktop"
   if [ "$ALLT" = 1 ]; then rm -rf "$CONF" "$STATE"; echo "Inställningar och loggar borttagna."; fi
   command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" 2>/dev/null || true
-  gron "Radiospanaren är avinstallerad."
+  gron "Signalspanaren är avinstallerad."
   [ "$ALLT" = 1 ] || echo "Inställningar ($CONF) och loggar ($STATE) finns kvar. Ta bort dem med --avinstallera --allt"
   exit 0
 fi
 
-echo "═══ Installerar Radiospanaren ═══"
+echo "═══ Installerar Signalspanaren ═══"
 
 # ── 1. Systempaket ──────────────────────────────────────────────────
 . /etc/os-release 2>/dev/null || true
@@ -116,32 +118,32 @@ fi
 
 # ── 3. Programfiler ─────────────────────────────────────────────────
 mkdir -p "$DEST" "$BIN" "$APPS" "$ICONS" "$STATE"
-install -m 755 "$SRC/radiospanaren.py" "$DEST/radiospanaren.py"
+install -m 755 "$SRC/signalspanaren.py" "$DEST/signalspanaren.py"
 install -m 644 "$SRC/avkodare.py" "$SRC/adsb.py" "$SRC/kartvy.py" "$SRC/aktivitet.py" "$SRC/analys.py" \
-  "$SRC/analysavkodare.py" "$SRC/iqfil.py" "$SRC/kiwisdr.py" "$SRC/webbmottagare.py" "$SRC/signaldb.py" "$SRC/MANUAL.txt" "$DEST/"
+  "$SRC/analysavkodare.py" "$SRC/iqfil.py" "$SRC/kiwisdr.py" "$SRC/webbmottagare.py" "$SRC/signaldb.py" "$SRC/frontpanel.py" "$SRC/skarm.py" "$SRC/MANUAL.txt" "$DEST/"
 install -m 755 "$SRC/adsb_karta.py" "$DEST/adsb_karta.py"
 install -m 755 "$SRC/installera.sh" "$DEST/installera.sh"
 install -m 644 "$SRC/$APP_ID.svg" "$ICONS/$APP_ID.svg"
 
-cat > "$BIN/radiospanaren" <<'EOF'
+cat > "$BIN/signalspanaren" <<'EOF'
 #!/bin/sh
-# Startskript för Radiospanaren. Felutskrifter från GTK m.m. hamnar i stderr.log.
-STATE="${XDG_STATE_HOME:-$HOME/.local/state}/radiospanaren"
+# Startskript för Signalspanaren. Felutskrifter från GTK m.m. hamnar i stderr.log.
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/signalspanaren"
 mkdir -p "$STATE"
-APP="${XDG_DATA_HOME:-$HOME/.local/share}/radiospanaren/radiospanaren.py"
+APP="${XDG_DATA_HOME:-$HOME/.local/share}/signalspanaren/signalspanaren.py"
 case " $* " in
   *" --rapport "*|*" --logg"*|*" --fel "*|*" --manual "*|*" --help "*|*" -h "*|*" --version "*|*" --sjalvtest "*|*" --sokvagar "*|*" --debug "*|*" --rensa-logg "*|*" --aterstall "*)
     exec python3 "$APP" "$@" ;;
 esac
 exec python3 "$APP" "$@" 2>>"$STATE/stderr.log"
 EOF
-chmod 755 "$BIN/radiospanaren"
+chmod 755 "$BIN/signalspanaren"
 cat > "$BIN/flygradar" <<'FLYG'
 #!/bin/sh
-# Startskript för Flygradar (ADS-B med karta), del av Radiospanaren.
-STATE="${XDG_STATE_HOME:-$HOME/.local/state}/radiospanaren"
+# Startskript för Flygradar (ADS-B med karta), del av Signalspanaren.
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/signalspanaren"
 mkdir -p "$STATE"
-APP="${XDG_DATA_HOME:-$HOME/.local/share}/radiospanaren/adsb_karta.py"
+APP="${XDG_DATA_HOME:-$HOME/.local/share}/signalspanaren/adsb_karta.py"
 case " $* " in
   *" --help "*|*" -h "*|*" --version "*|*" --sjalvtest "*|*" --debug "*) exec python3 "$APP" "$@" ;;
 esac
@@ -149,14 +151,28 @@ exec python3 "$APP" "$@" 2>>"$STATE/stderr.log"
 FLYG
 chmod 755 "$BIN/flygradar"
 
+# Namnbytet Radiospanaren → Signalspanaren: ta bort den gamla installationen (inställningar,
+# bokmärken, loggar och inspelningar flyttas av programmet självt vid första start).
+if [ -d "$OLD_DEST" ] || [ -e "$APPS/$OLD_ID.desktop" ] || [ -e "$DESKTOP_DIR/Radiospanaren.desktop" ]; then
+  gul "Programmet heter numera Signalspanaren – tar bort den gamla Radiospanaren-installationen."
+  rm -rf "$OLD_DEST"
+  rm -f "$APPS/$OLD_ID.desktop" "$APPS/$OLD_ID.Flygradar.desktop" "$ICONS/$OLD_ID.svg" "$DESKTOP_DIR/Radiospanaren.desktop"
+fi
+cat > "$BIN/radiospanaren" <<'GAMMALT'
+#!/bin/sh
+# Programmet heter numera Signalspanaren – det gamla kommandot fungerar fortfarande.
+exec "$(dirname "$0")/signalspanaren" "$@"
+GAMMALT
+chmod 755 "$BIN/radiospanaren"
+
 # ── 4. Programmeny och skrivbord ────────────────────────────────────
 cat > "$APPS/$APP_ID.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Radiospanaren
+Name=Signalspanaren
 GenericName=SDR-mottagare och radioskanner
 Comment=Spektrum, vattenfall, skanner, signallogg och avkodare för RTL-SDR
-Exec=$BIN/radiospanaren
+Exec=$BIN/signalspanaren
 Icon=$APP_ID
 Terminal=false
 Categories=AudioVideo;Audio;HamRadio;
@@ -171,7 +187,7 @@ Exec=$BIN/flygradar
 
 [Desktop Action Simulator]
 Name=Starta med simulator (utan SDR)
-Exec=$BIN/radiospanaren --simulator --start
+Exec=$BIN/signalspanaren --simulator --start
 
 [Desktop Action Manual]
 Name=Visa manualen
@@ -183,7 +199,7 @@ cat > "$APPS/$APP_ID.Flygradar.desktop" <<FLYGDESK
 Type=Application
 Name=Flygradar
 GenericName=ADS-B-mottagare med karta
-Comment=Visar flygplan i närheten på en karta (ADS-B, 1090 MHz) – del av Radiospanaren
+Comment=Visar flygplan i närheten på en karta (ADS-B, 1090 MHz) – del av Signalspanaren
 Exec=$BIN/flygradar
 Icon=$APP_ID
 Terminal=false
@@ -199,9 +215,9 @@ Exec=$BIN/flygradar --simulator --start
 FLYGDESK
 chmod 755 "$APPS/$APP_ID.Flygradar.desktop"
 if [ -d "$DESKTOP_DIR" ]; then
-  cp "$APPS/$APP_ID.desktop" "$DESKTOP_DIR/Radiospanaren.desktop"
-  chmod 755 "$DESKTOP_DIR/Radiospanaren.desktop"
-  gio set "$DESKTOP_DIR/Radiospanaren.desktop" metadata::trusted true 2>/dev/null || true
+  cp "$APPS/$APP_ID.desktop" "$DESKTOP_DIR/Signalspanaren.desktop"
+  chmod 755 "$DESKTOP_DIR/Signalspanaren.desktop"
+  gio set "$DESKTOP_DIR/Signalspanaren.desktop" metadata::trusted true 2>/dev/null || true
 fi
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" 2>/dev/null || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -f -t "$DATA/icons/hicolor" 2>/dev/null || true
@@ -232,9 +248,9 @@ fi
 
 # ── 6. Självtest ────────────────────────────────────────────────────
 echo "Kör självtest …"
-if "$BIN/radiospanaren" --sjalvtest | tail -6; then :; fi
-case ":$PATH:" in *":$BIN:"*) ;; *) gul "Obs: $BIN finns inte i PATH ännu – logga ut och in, så fungerar kommandot radiospanaren i terminalen.";; esac
+if "$BIN/signalspanaren" --sjalvtest | tail -6; then :; fi
+case ":$PATH:" in *":$BIN:"*) ;; *) gul "Obs: $BIN finns inte i PATH ännu – logga ut och in, så fungerar kommandot signalspanaren i terminalen.";; esac
 echo
-gron "Klart! Starta Radiospanaren från programmenyn eller skrivbordet, eller skriv: radiospanaren"
-echo "Flygradar (ADS-B med karta): flygradar  – eller knappen i Radiospanaren (sidopanelen → Avkodare)"
-echo "Manual: radiospanaren --manual    Felrapport: radiospanaren --rapport"
+gron "Klart! Starta Signalspanaren från programmenyn eller skrivbordet, eller skriv: signalspanaren"
+echo "Flygradar (ADS-B med karta): flygradar  – eller knappen i Signalspanaren (sidopanelen → Avkodare)"
+echo "Manual: signalspanaren --manual    Felrapport: signalspanaren --rapport"

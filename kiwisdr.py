@@ -36,7 +36,7 @@ import numpy as np
 
 import iqfil
 
-log = logging.getLogger("radiospanaren")
+log = logging.getLogger("signalspanaren")
 
 KIWI_MAX_HZ = 32e6          # KiwiSDR tar emot 0–30 MHz (vissa 0–32)
 
@@ -57,7 +57,7 @@ class WebSocket:
         hostp = host if port in (80, 443) else f"{host}:{port}"
         req = (f"GET {path} HTTP/1.1\r\nHost: {hostp}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n"
-               f"User-Agent: Radiospanaren\r\n\r\n")
+               f"User-Agent: Signalspanaren\r\n\r\n")
         self.sock.sendall(req.encode())
         self.rbuf = bytearray()
         head = self._read_until(b"\r\n\r\n")
@@ -170,7 +170,7 @@ def parse_addr(addr):
 class KiwiClient:
     """Ansluter till KiwiSDR:ns SND-kanal i IQ-läge. Läser i en egen tråd; read_iq() hämtar data."""
 
-    def __init__(self, addr, ident="Radiospanaren"):
+    def __init__(self, addr, ident="Signalspanaren"):
         self.host, self.port, self.password, self.secure = parse_addr(addr)
         self.ident = ident
         self.ws = None
@@ -214,7 +214,7 @@ class KiwiClient:
                 raise KiwiError("KiwiSDR:n svarade inte med samplingstakt")
             self._handle(self.ws.recv())
         self.ws.send(f"SET AR OK in={int(round(self.rate))} out=48000")
-        self.ws.send("SERVER DE CLIENT Radiospanaren SND")
+        self.ws.send("SERVER DE CLIENT Signalspanaren SND")
         self.ws.send(f"SET ident_user={urllib.parse.quote(self.ident)}")
         self.ws.send("SET squelch=0 max=0")
         self.ws.send("SET genattn=0")
@@ -368,7 +368,7 @@ class KiwiClient:
 
 
 # ════════════════════════════════════════════════════════════════════
-# Mottagarkälla för Radiospanaren
+# Mottagarkälla för Signalspanaren
 # ════════════════════════════════════════════════════════════════════
 class KiwiSource:
     """BaseSource-gränssnittet: set(), open(), read(), close(). Mittfrekvensen styrs av
@@ -376,7 +376,7 @@ class KiwiSource:
     kind = "kiwi"
     name = "KiwiSDR"
 
-    def __init__(self, addr, out_rate, block, ident="Radiospanaren"):
+    def __init__(self, addr, out_rate, block, ident="Signalspanaren"):
         self.addr = addr
         self.out_rate = float(out_rate)
         self.block = int(block)

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-Fler avkodare för signalanalysen i Radiospanaren.
+Fler avkodare för signalanalysen i Signalspanaren.
 
   NAVTEX / SITOR-B   CCIR 476, 100 Bd, 170 Hz shift, FEC med repetition 5 tecken senare
   POCSAG             personsökare 512/1200/2400 Bd, BCH(31,21)

@@ -1,17 +1,17 @@
-# Flatpak-manifest för Radiospanaren.
+# Flatpak-manifest för Signalspanaren.
 #
 # Bygg (kräver flatpak-builder och GNOME 51-körtiden):
 #   flatpak install flathub org.flatpak.Builder org.gnome.Platform//51 org.gnome.Sdk//51
 #   flatpak run org.flatpak.Builder --user --install --force-clean build-dir \
-#       flatpak/se.eh.Radiospanaren.yaml
-#   flatpak run se.eh.Radiospanaren
+#       flatpak/se.eh.Signalspanaren.yaml
+#   flatpak run se.eh.Signalspanaren
 #
 # Appen får rå USB-åtkomst (--device=all) för RTL-SDR och ljud via PulseAudio/PipeWire.
-app-id: se.eh.Radiospanaren
+app-id: se.eh.Signalspanaren
 runtime: org.gnome.Platform
 runtime-version: '51'
 sdk: org.gnome.Sdk
-command: radiospanaren
+command: signalspanaren
 
 finish-args:
   - --share=ipc
@@ -20,7 +20,7 @@ finish-args:
   - --socket=pulseaudio
   - --share=network          # OSM-kartrutor, rtl_tcp, KiwiSDR och webbgränssnittet
   - --device=all             # rå USB-åtkomst till RTL-SDR-dongeln
-  - --filesystem=xdg-music:create   # inspelningar hamnar i ~/Musik/Radiospanaren
+  - --filesystem=xdg-music:create   # inspelningar hamnar i ~/Musik/Signalspanaren
   - --env=PYTHONPATH=/app/lib/python3.14/site-packages
 
 cleanup:
@@ -85,31 +85,31 @@ modules:
         url: https://files.pythonhosted.org/packages/6b/89/2a844506d49651e9aa1af6ef95b6bd8031cb1d5a4375edec6155037e04cf/scipy-1.18.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
         sha256: ac0333bdf38309aa3dcbe7e3fa7ea29e7a2c37c6ea306a757b700ded8e4596ad
 
-  # ── Själva Radiospanaren ──
-  - name: radiospanaren
+  # ── Själva Signalspanaren ──
+  - name: signalspanaren
     buildsystem: simple
     build-commands:
-      - install -d /app/share/radiospanaren
-      - install -m644 radiospanaren.py avkodare.py adsb.py adsb_karta.py kartvy.py aktivitet.py
-        analys.py analysavkodare.py iqfil.py kiwisdr.py webbmottagare.py signaldb.py MANUAL.txt /app/share/radiospanaren/
+      - install -d /app/share/signalspanaren
+      - install -m644 signalspanaren.py avkodare.py adsb.py adsb_karta.py kartvy.py aktivitet.py
+        analys.py analysavkodare.py iqfil.py kiwisdr.py webbmottagare.py signaldb.py frontpanel.py skarm.py MANUAL.txt /app/share/signalspanaren/
       - |
-        cat > /app/bin/radiospanaren <<'EOF'
+        cat > /app/bin/signalspanaren <<'EOF'
         #!/bin/sh
-        exec python3 /app/share/radiospanaren/radiospanaren.py "$@"
+        exec python3 /app/share/signalspanaren/signalspanaren.py "$@"
         EOF
-        chmod 755 /app/bin/radiospanaren
+        chmod 755 /app/bin/signalspanaren
       - |
         cat > /app/bin/flygradar <<'EOF'
         #!/bin/sh
-        exec python3 /app/share/radiospanaren/adsb_karta.py "$@"
+        exec python3 /app/share/signalspanaren/adsb_karta.py "$@"
         EOF
         chmod 755 /app/bin/flygradar
-      - install -Dm644 se.eh.Radiospanaren.svg
-        /app/share/icons/hicolor/scalable/apps/se.eh.Radiospanaren.svg
-      - install -Dm644 flatpak/se.eh.Radiospanaren.desktop
-        /app/share/applications/se.eh.Radiospanaren.desktop
-      - install -Dm644 flatpak/se.eh.Radiospanaren.metainfo.xml
-        /app/share/metainfo/se.eh.Radiospanaren.metainfo.xml
+      - install -Dm644 se.eh.Signalspanaren.svg
+        /app/share/icons/hicolor/scalable/apps/se.eh.Signalspanaren.svg
+      - install -Dm644 flatpak/se.eh.Signalspanaren.desktop
+        /app/share/applications/se.eh.Signalspanaren.desktop
+      - install -Dm644 flatpak/se.eh.Signalspanaren.metainfo.xml
+        /app/share/metainfo/se.eh.Signalspanaren.metainfo.xml
     sources:
       - type: dir
         path: ..

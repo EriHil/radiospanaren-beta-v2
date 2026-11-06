@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>se.eh.Radiospanaren</id>
+  <id>se.eh.Signalspanaren</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
-  <name>Radiospanaren</name>
+  <name>Signalspanaren</name>
   <summary>SDR-mottagare, radioskanner, signallogg, avkodare och kartor</summary>
   <description>
     <p>
-      Radiospanaren gör en RTL-SDR-dongel till en komplett mottagarstation med
+      Signalspanaren gör en RTL-SDR-dongel till en komplett mottagarstation med
       grafiskt gränssnitt, på svenska. Programmet kombinerar spektrum och
       vattenfall, demodulering (WFM, NFM, AM, USB, LSB, CW), en radioskanner och
       en signallogg med filter.
@@ -26,9 +26,9 @@
       frekvenskorrigeringen mot en känd sändare.
     </p>
   </description>
-  <launchable type="desktop-id">se.eh.Radiospanaren.desktop</launchable>
+  <launchable type="desktop-id">se.eh.Signalspanaren.desktop</launchable>
   <provides>
-    <binary>radiospanaren</binary>
+    <binary>signalspanaren</binary>
     <binary>flygradar</binary>
   </provides>
   <categories>

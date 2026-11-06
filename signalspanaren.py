@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 erihil
 """
-Radiospanaren – SDR-mottagare, radioskanner och signallogg för Fedora.
+Signalspanaren – SDR-mottagare, radioskanner och signallogg för Fedora.
 
 Delar:
   1. Loggning och felrapport
@@ -27,27 +27,54 @@ import traceback
 import threading
 import atexit
 
-APP_NAME = "Radiospanaren"
-APP_ID = "se.eh.Radiospanaren"
-VERSION = "2.7.0"
+APP_NAME = "Signalspanaren"
+APP_ID = "se.eh.Signalspanaren"
+VERSION = "2.8.0"
 
 HOME = os.path.expanduser("~")
-STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "radiospanaren")
-CONF_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "radiospanaren")
+STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "signalspanaren")
+CONF_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "signalspanaren")
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE = os.path.join(STATE_DIR, "radiospanaren.log")
+LOG_FILE = os.path.join(STATE_DIR, "signalspanaren.log")
 STDERR_FILE = os.path.join(STATE_DIR, "stderr.log")
 REPORT_FILE = os.path.join(STATE_DIR, "felrapport.txt")
 CONF_FILE = os.path.join(CONF_DIR, "config.json")
-CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.join(HOME, ".cache")), "radiospanaren")
+CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.join(HOME, ".cache")), "signalspanaren")
 WEBRX_CACHE = os.path.join(CACHE_DIR, "webbmottagare.json")
 CSS_FILE = os.path.join(CONF_DIR, "style.css")
 MANUAL_FILE = os.path.join(APP_DIR, "MANUAL.txt")
 
+OLD_NAME = "radiospanaren"          # programmet hette Radiospanaren före 2.8.0
+
+
+def migrate_old_name():
+    """Flyttar inställningar, bokmärken, loggar och cache från Radiospanaren-mapparna (före 2.8.0)
+    till Signalspanaren-mapparna – bara om de nya inte finns än. Returnerar vad som flyttades."""
+    moved = []
+    for new in (CONF_DIR, STATE_DIR, CACHE_DIR):
+        old = os.path.join(os.path.dirname(new), OLD_NAME)
+        if os.path.isdir(old) and not os.path.exists(new):
+            try:
+                os.rename(old, new)
+                moved.append((old, new))
+            except OSError as ex:
+                print(f"Kunde inte flytta {old} till {new}: {ex}", file=sys.stderr)
+    for i in ("", ".1", ".2", ".3"):
+        o = os.path.join(STATE_DIR, OLD_NAME + ".log" + i)
+        n = LOG_FILE + i
+        if os.path.exists(o) and not os.path.exists(n):
+            try:
+                os.rename(o, n)
+            except OSError:
+                pass
+    return moved
+
+
+_MIGRATED = migrate_old_name()
 os.makedirs(STATE_DIR, exist_ok=True)
 os.makedirs(CONF_DIR, exist_ok=True)
 
-log = logging.getLogger("radiospanaren")
+log = logging.getLogger("signalspanaren")
 
 
 def _trim_file(path, max_bytes=1_000_000, keep=200_000):
@@ -154,7 +181,7 @@ def build_report(extra=None):
             lines.append(f.read().strip()[:3000])
     except OSError:
         pass
-    lines.append("--- senaste raderna i radiospanaren.log ---")
+    lines.append("--- senaste raderna i signalspanaren.log ---")
     lines.extend(l.rstrip("\n") for l in _tail(LOG_FILE, 150))
     err = _tail(STDERR_FILE, 60)
     if err:
@@ -293,7 +320,7 @@ DEFAULT_CONF = {
     "scan_step_khz": 12.5, "scan_hold": 2.0, "scan_max_listen": 0.0, "scan_dwell_ms": 300, "det_thresh": 12.0,
     "det_enabled": True, "auto_rec": False, "web_enabled": False, "web_port": 8073,
     "web_public": False, "iq_format": 0, "play_file": "", "play_speed": 0, "play_loop": False,
-    "play_override": {}, "lockout": [], "bookmarks": DEFAULT_BOOKMARKS, "window": [1400, 900], "sidebar_width": 330,
+    "play_override": {}, "lockout": [], "bookmarks": DEFAULT_BOOKMARKS, "window": None, "window_max": False, "skarm_lage": "auto", "sidebar_width": 330,
 }
 
 COLORMAPS = {
@@ -482,7 +509,17 @@ def rec_dir():
         base = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_MUSIC)
     except Exception:
         pass
-    d = os.path.join(base or HOME, "Radiospanaren")
+    d = os.path.join(base or HOME, "Signalspanaren")
+    if not os.path.exists(d):
+        # inspelningar från tiden som Radiospanaren: flytta mappen (i musikmappen eller hemmappen)
+        for old in (os.path.join(base or HOME, "Radiospanaren"), os.path.join(HOME, "Radiospanaren")):
+            if os.path.isdir(old):
+                try:
+                    os.rename(old, d)
+                    log.info("Flyttade inspelningsmappen %s → %s", old, d)
+                    break
+                except OSError as ex:
+                    log.warning("Kunde inte flytta %s: %s", old, ex)
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -1547,7 +1584,7 @@ class AudioOut:
 
     def _spawn(self):
         cmds = [["pacat", "--playback", "--raw", "--format=s16le", "--rate=48000", "--channels=1",
-                 "--latency-msec=150", "--client-name=Radiospanaren", "--stream-name=Mottagare"],
+                 "--latency-msec=150", "--client-name=Signalspanaren", "--stream-name=Mottagare"],
                 ["pw-cat", "--playback", "--format=s16", "--rate=48000", "--channels=1", "-"]]
         for c in cmds:
             if shutil.which(c[0]):
@@ -1651,7 +1688,7 @@ class QueueSink:
 
 
 WEB_HTML = r"""<!doctype html><html lang="sv"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Radiospanaren – webb</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Signalspanaren – webb</title>
 <style>
 body{margin:0;background:#111418;color:#dde3ea;font:14px system-ui,sans-serif}
 #top{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 12px;background:#1b2027}
@@ -1837,7 +1874,7 @@ def run_gui(args):
     adw_v = (Adw.get_major_version(), Adw.get_minor_version())
     if gtk_v < MIN_GTK or adw_v < MIN_ADW:
         msg = (f"För gamla versioner: GTK {gtk_v[0]}.{gtk_v[1]} och libadwaita {adw_v[0]}.{adw_v[1]}. "
-               f"Radiospanaren kräver GTK {MIN_GTK[0]}.{MIN_GTK[1]}+ och libadwaita {MIN_ADW[0]}.{MIN_ADW[1]}+ "
+               f"Signalspanaren kräver GTK {MIN_GTK[0]}.{MIN_GTK[1]}+ och libadwaita {MIN_ADW[0]}.{MIN_ADW[1]}+ "
                "(t.ex. Fedora 40+, Ubuntu 24.04+, Linux Mint 22+).")
         log.critical(msg)
         print(msg, file=sys.stderr)
@@ -1980,7 +2017,9 @@ def run_gui(args):
 
         def layout(self, H):
             band_h, axis_h = 18, 18
-            spec_h = int((H - band_h - axis_h) * self.win.conf["spec_frac"])
+            avail = H - band_h - axis_h
+            # på låga skärmar: spektrumet minst ~70 px (så långt det går) så att dB-skalan går att läsa
+            spec_h = int(max(avail * self.win.conf["spec_frac"], min(70, avail * 0.6)))
             return band_h, spec_h, axis_h, band_h + spec_h + axis_h
 
         def on_click(self, g, n, x, y):
@@ -2066,7 +2105,9 @@ def run_gui(args):
             rng = max(1.0, dbmax - dbmin)
             cr.set_font_size(10)
             cr.set_line_width(1)
-            step_db = 10 if rng > 30 else 5
+            # tätaste steg som ger minst 13 px mellan dB-siffrorna (annars skrivs de över varandra)
+            step_db = next((st for st in (5, 10, 20, 30, 50, 100) if st / rng * spec_h >= 13 and
+                            (st >= 10 or rng <= 30)), 100)
             d = math.ceil(dbmin / step_db) * step_db
             while d < dbmax:
                 yy = sy + (dbmax - d) / rng * spec_h
@@ -2745,7 +2786,7 @@ def run_gui(args):
         TYPES = ["Alla typer", "KiwiSDR", "OpenWebRX", "WebSDR"]
 
         def __init__(self, main):
-            super().__init__(title="Webbmottagare – Radiospanaren", transient_for=main)
+            super().__init__(title="Webbmottagare – Signalspanaren", transient_for=main)
             self.main = main
             c = main.conf
             self.cat = webbmottagare.Catalog(WEBRX_CACHE, c.setdefault("webrx_own", []))
@@ -2928,7 +2969,7 @@ def run_gui(args):
             more = f" (de första {self.MAX_ROWS} – sök för att begränsa)" if len(L) > self.MAX_ROWS else ""
             self.status.set_text(f"Visar {min(len(L), self.MAX_ROWS)} av {len(L)} som matchar, {n_all} totalt{more} · {src} · "
                                  "Källor: kiwisdr.com (via rx.linkfanel.net), receiverbook.de, SA0BMC:s länktips, SK6AG. "
-                                 "Bara KiwiSDR kan tas emot i Radiospanaren – OpenWebRX och WebSDR öppnas i webbläsaren.")
+                                 "Bara KiwiSDR kan tas emot i Signalspanaren – OpenWebRX och WebSDR öppnas i webbläsaren.")
             return False
 
         def _row(self, r, home, cur):
@@ -2959,7 +3000,7 @@ def run_gui(args):
                 b = Gtk.Button(label="Används" if cur == webbmottagare.norm_url(r["url"]) else "Använd",
                                valign=Gtk.Align.CENTER)
                 b.add_css_class("suggested-action")
-                b.set_tooltip_text("Ta emot från den här KiwiSDR:n i Radiospanaren")
+                b.set_tooltip_text("Ta emot från den här KiwiSDR:n i Signalspanaren")
                 b.connect("clicked", lambda *_: self.main.use_webrx(r))
                 row.add_suffix(b)
             w = Gtk.Button(label="🌐", valign=Gtk.Align.CENTER, tooltip_text="Öppna i webbläsaren")
@@ -3039,7 +3080,7 @@ def run_gui(args):
         MAX_AGE = 30 * 60          # fartyg försvinner efter 30 min utan meddelanden
 
         def __init__(self, main):
-            super().__init__(title="Fartyg (AIS) – Radiospanaren")
+            super().__init__(title="Fartyg (AIS) – Signalspanaren")
             import kartvy
             self.K = kartvy
             self.main = main
@@ -3061,11 +3102,12 @@ def run_gui(args):
 
             lat, lon, zoom = main.conf.get("ship_map_view", [59.33, 18.06, 9.0])
             self.mp = kartvy.MapPanel(center=(lat, lon), zoom=zoom or 9.0, on_select=self._select,
-                                      user_agent=f"Radiospanaren/{VERSION} (+https://github.com/EriHil/radiospanaren-beta-v2)",
+                                      user_agent=f"Signalspanaren/{VERSION} (+https://github.com/EriHil/radiospanaren-beta-v2)",
                                       toast=main.toast)
             left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             left.append(self.mp)
-            legend = Gtk.Box(spacing=12)
+            legend = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, column_spacing=12, row_spacing=0,
+                                 max_children_per_line=20, homogeneous=False)
             legend.set_margin_start(8)
             legend.set_margin_top(4)
             legend.set_margin_bottom(4)
@@ -3079,9 +3121,7 @@ def run_gui(args):
             lb = Gtk.Label(label="○ förtöjd/till ankars")
             lb.add_css_class("caption")
             legend.append(lb)
-            sw_l = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.NEVER)
-            sw_l.set_child(legend)
-            left.append(sw_l)
+            left.append(legend)                  # FlowBox: radbryts när kartan är smal
 
             cols = [
                 ("MMSI", lambda d: d["mmsi"], "mmsi", False),
@@ -3373,7 +3413,7 @@ def run_gui(args):
 
     class ActivityWindow(Adw.Window):
         def __init__(self, main):
-            super().__init__(title="Aktivitetskarta – Radiospanaren")
+            super().__init__(title="Aktivitetskarta – Signalspanaren")
             import aktivitet
             self.AK = aktivitet
             self.main = main
@@ -3581,7 +3621,7 @@ def run_gui(args):
         def __init__(self, panel):
             super().__init__(hexpand=True, vexpand=True)
             self.panel = panel
-            self.set_size_request(360, 130)
+            self.set_size_request(240, 80)
             self.wf = np.zeros((self.ROWS, analys.ChannelTap.WF_N), np.uint8)
             self.spec = None
             self.fs = None
@@ -3774,7 +3814,7 @@ def run_gui(args):
         def __init__(self, panel):
             super().__init__()
             self.panel = panel
-            self.set_size_request(200, 120)
+            self.set_size_request(200, 70)
             self.set_draw_func(self.on_draw)
 
         def on_draw(self, area, cr, W, H, *_):
@@ -3890,7 +3930,7 @@ def run_gui(args):
         """Hela faxbilden med spara, ny bild och manuell justering av radstarten."""
 
         def __init__(self, panel):
-            super().__init__(title="Väderfax – Radiospanaren", transient_for=panel.win,
+            super().__init__(title="Väderfax – Signalspanaren", transient_for=panel.win,
                              default_width=820, default_height=900)
             self.panel = panel
             tv = Adw.ToolbarView()
@@ -3976,8 +4016,15 @@ def run_gui(args):
             self.set_margin_bottom(6)
 
             tb = Gtk.Box(spacing=6)
+            self.tb = tb
+            self.title_row = Gtk.Box()           # rubriken flyttas hit när panelen är för smal för en rad
+            self.title_row.set_visible(False)
+            self.append(self.title_row)
             self.title = Gtk.Label(xalign=0, hexpand=True)
             self.title.set_markup("<b>Signalanalys</b> – klicka på en bärvåg i vattenfallet")
+            self.title.set_wrap(True)
+            self.title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            self.title.set_lines(2)
             self.title.set_ellipsize(Pango.EllipsizeMode.END)
             tb.append(self.title)
             self.bw_dd = Gtk.DropDown.new_from_strings(ANALYS_BW_NAMES)
@@ -4020,9 +4067,11 @@ def run_gui(args):
             tb.append(self.detach_btn)
             self.append(tb)
 
-            paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, vexpand=True)
+            paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, vexpand=True, wide_handle=True)
+            paned.add_css_class("delare")
             # vänster: litet vattenfall överst, mätvärden under
-            left = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+            left = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, wide_handle=True)
+            left.add_css_class("delare")
             self.mini = MiniWaterfall(self)
             fr = Gtk.Frame()
             fr.set_child(self.mini)
@@ -4042,49 +4091,63 @@ def run_gui(args):
                 l2.add_css_class("analys-klass" if key == "klass" else "monospace")
                 self.cells[key] = (l1, l2)
             self._layout_cells(2)
-            sw = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+            sw = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True)
+            sw.set_overlay_scrolling(False)      # synlig rullist när alla mätvärden inte ryms
             sw.set_size_request(-1, 60)
             sw.set_child(grid)
+            self.cells_sw = sw
             left.set_end_child(sw)
+            left.set_resize_end_child(False)
             left.set_shrink_end_child(False)
             left.set_position(160)
+            self.left_paned = left
+            self._left_user = False
+            g = Gtk.GestureClick(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+            g.connect("pressed", self._on_left_press)
+            left.add_controller(g)
+            left.connect("notify::max-position", lambda *_: GLib.idle_add(self._fit_cells))
             paned.set_start_child(left)
             paned.set_resize_start_child(True)
             paned.set_shrink_start_child(False)
 
             # höger: diagram, möjliga signaltyper och klartext
-            right = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+            right = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, wide_handle=True)
+            right.add_css_class("delare")
             self.diag = AnalysDiagram(self)
             fr = Gtk.Frame()
             fr.set_child(self.diag)
             right.set_start_child(fr)
             right.set_shrink_start_child(False)
             info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            typbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             self.kand = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
             self.kand.add_css_class("analys-ram")
             self.kand.set_markup("<b>Signaltyp</b>\n–")
-            info.append(self.kand)
+            typbox.append(self.kand)
             self.alt = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
             self.alt.add_css_class("analys-ram")
             self.alt_exp = Gtk.Expander(label="Andra möjliga")
             self.alt_exp.set_child(self.alt)
             self.alt_exp.set_expanded(False)
             self.alt_exp.set_visible(False)
-            info.append(self.alt_exp)
+            typbox.append(self.alt_exp)
+            sw_typ = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True,
+                                        max_content_height=170)
+            sw_typ.set_child(typbox)
+            info.append(sw_typ)
             info.append(Gtk.Label(label="Klartext från avkodaren", xalign=0, css_classes=["dim-label"]))
             self.textbuf = Gtk.TextBuffer()
-            tv = Gtk.TextView(buffer=self.textbuf, editable=False, wrap_mode=Gtk.WrapMode.CHAR, monospace=True,
-                              vexpand=True)
+            tv = Gtk.TextView(buffer=self.textbuf, editable=False, wrap_mode=Gtk.WrapMode.CHAR, monospace=True)
             tv.add_css_class("analys-text")
             tv.set_left_margin(6)
             tv.set_top_margin(4)
-            tv.set_size_request(-1, 70)
             self.textview = tv
-            info.append(tv)
-            sw2 = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
-            sw2.set_child(info)
-            self.info_sw = sw2
-            right.set_end_child(sw2)
+            sw2 = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
+            sw2.set_size_request(-1, 50)
+            sw2.set_child(tv)
+            self.info_sw = sw2                   # bara klartexten rullas med, inte signaltypen
+            info.append(sw2)
+            right.set_end_child(info)
             right.set_shrink_end_child(False)
             right.set_position(150)
             right.set_size_request(300, -1)
@@ -4093,6 +4156,48 @@ def run_gui(args):
             paned.set_shrink_end_child(False)
             self.append(paned)
             self._update_rows(None)
+
+        def _place_title(self):
+            """Rubriken bredvid knapparna om den ryms helt, annars på en egen rad ovanför."""
+            pw = self.get_width()
+            key = (pw, self.title.get_label(), self.fax_btn.get_visible())
+            if pw <= 0 or key == getattr(self, "_title_key", None):
+                return
+            self._title_key = key
+            knappar, c = 0, self.tb.get_first_child()
+            while c is not None:
+                if c is not self.title and c.get_visible():
+                    knappar += c.measure(Gtk.Orientation.HORIZONTAL, -1)[1] + 6
+                c = c.get_next_sibling()
+            lay = self.title.create_pango_layout(None)
+            lay.set_markup(self.title.get_label(), -1)
+            behov = lay.get_pixel_size()[0] + 4
+            smal = knappar + behov > pw - 12
+            par = self.title.get_parent()
+            if smal and par is self.tb:
+                self.tb.remove(self.title)
+                self.title_row.append(self.title)
+                self.title_row.set_visible(True)
+            elif not smal and par is self.title_row and knappar + behov < pw - 40:   # lite marginal mot fladder
+                self.title_row.remove(self.title)
+                self.title_row.set_visible(False)
+                self.tb.prepend(self.title)
+
+        def _on_left_press(self, _g, _n, _x, y):
+            if abs(y - self.left_paned.get_position() - 3) <= 8:
+                self._left_user = True          # användaren tar tag i delaren – rör den inte sen
+
+        def _fit_cells(self):
+            """Ge mätvärdena den höjd de behöver (så långt det går); minivattenfallet får resten."""
+            lp = self.left_paned
+            mx = lp.get_property("max-position")
+            if self._left_user or mx <= 0 or lp.get_width() < 50:
+                return False
+            _m, nat = self.cells_sw.get_child().measure(Gtk.Orientation.VERTICAL, lp.get_width())[:2]
+            pos = max(90, mx - nat - 2)
+            if pos != lp.get_position():
+                lp.set_position(pos)
+            return False
 
         def _layout_cells(self, cols):
             """Två kolumner med mätvärden när det finns plats, annars en."""
@@ -4138,6 +4243,7 @@ def run_gui(args):
             self.mini.zoom = 1.0
             self.title.set_markup(f"<b>Analys:</b> {fmt_mhz(f)} MHz  ·  {_fmt_hz(bw)}  "
                                   f"<span alpha='60%'>{GLib.markup_escape_text(band_name(f) or '')}</span>")
+            self.title.set_tooltip_markup(self.title.get_label())
             self._update_rows(None)
             self.diag.queue_draw()
             log.info("Signalanalys: %.6f MHz, bandbredd %.0f Hz", f / 1e6, bw)
@@ -4226,6 +4332,8 @@ def run_gui(args):
             gw = self.grid.get_width()
             if gw > 0:
                 self._layout_cells(2 if gw >= 620 else 1)
+            self._place_title()
+            self._fit_cells()
             if self.follow.get_active():
                 self.follow_tuned()
             an.dial, an.mode = self.win.freq, self.win.engine.mode
@@ -4364,7 +4472,7 @@ def run_gui(args):
 
         def copy(self):
             r = self.last or {}
-            out = [f"Radiospanaren signalanalys {time.strftime('%Y-%m-%d %H:%M:%S')}"]
+            out = [f"Signalspanaren signalanalys {time.strftime('%Y-%m-%d %H:%M:%S')}"]
             for key, title in self.ROWS:
                 l1, l2 = self.cells[key]
                 if l2.get_visible():
@@ -4395,8 +4503,17 @@ def run_gui(args):
             self._updating = False
             self._auto_level_pending = True
             self.scanner = Scanner(self)
-            w, h = conf.get("window", [1400, 900])
+            import skarm
+            self.skarm = skarm
+            w, h, maxi = skarm.startstorlek(conf.get("window"))
             self.set_default_size(w, h)
+            if maxi or conf.get("window_max"):
+                self.maximize()
+            kompakt = skarm.ar_kompakt(conf.get("skarm_lage", "auto"))
+            skarm.satt_kompakt(self, kompakt)
+            skarm.folj_skarm(self, lambda: self.conf.get("skarm_lage", "auto"), self._on_ny_skarm)
+            log.info("Skärm: %s – fönster %d×%d%s, %s läge", skarm.beskriv(), w, h, " (maximerat)" if maxi else "",
+                     "kompakt" if kompakt else "normalt")
 
             e = self.engine
             e.mode = conf["mode"] if conf["mode"] in MODES else "WFM"
@@ -4437,9 +4554,11 @@ def run_gui(args):
             outer.set_start_child(self._build_sidebar())
             outer.set_resize_start_child(False)
             outer.set_shrink_start_child(False)
-            outer.set_position(conf.get("sidebar_width", 330))
+            outer.set_position(skarm.sidopanel_bredd(conf.get("sidebar_width")))
             self.outer = outer
-            right = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+            right = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, wide_handle=True)
+            right.add_css_class("delare")
+            right.add_css_class("nedre-delare")
             self.view = SpectrumView(self)
             overlay = Gtk.Overlay()
             overlay.set_child(self.view)
@@ -4462,8 +4581,25 @@ def run_gui(args):
             overlay.add_overlay(ctrls)
             right.set_start_child(overlay)
             right.set_end_child(self._build_bottom())
+            right.set_resize_end_child(False)     # panelen behåller sin höjd när fönstret ändras
+            right.set_shrink_end_child(False)
+            right.set_shrink_start_child(False)
             right.set_position(int(h * 0.62))
             self.right_paned = right
+            self._bottom_restored = False
+            self._bottom_grown = False
+            def _restore_bottom(*_):
+                mx = right.get_property("max-position")
+                bh = self.conf.get("bottom_height")
+                if self._bottom_restored or mx <= 0:
+                    return
+                self._bottom_restored = True
+                if bh:
+                    self._bottom_grown = True     # användarens sparade höjd gäller
+                    right.set_position(max(min(200, mx // 2), mx - int(bh)))   # vattenfallet behåller minst 200 px
+                else:
+                    right.set_position(int(mx * (0.55 if mx < 700 else 0.6)))
+            right.connect("notify::max-position", _restore_bottom)
             outer.set_end_child(right)
             self.toasts.set_child(outer)
             tv.set_content(self.toasts)
@@ -4582,7 +4718,9 @@ def run_gui(args):
 
         def _combo(self, group, title, items, sel, cb):
             r = Adw.ComboRow(title=title)
-            r.set_model(Gtk.StringList.new(items))
+            if max((len(x) for x in items), default=0) > 14:
+                r.set_use_subtitle(True)        # långa val syns helt i stället för ”KiwiSDR (webb-SDR på …”
+            r.set_model(Gtk.StringList.new(items))   # efter use_subtitle, annars visas inte första valet
             r.set_selected(sel)
             r.connect("notify::selected", lambda row, _p: cb(row.get_selected()))
             group.add(r)
@@ -4632,7 +4770,8 @@ def run_gui(args):
                                            "Kiwin ger ca 12 kHz I/Q i taget, 0–30 MHz.")
             self.kiwi_row.connect("apply", lambda r: self._set_conf("kiwi_addr", r.get_text().strip()))
             g.add(self.kiwi_row)
-            self._button(g, "🌐 Webbmottagare på nätet (KiwiSDR, OpenWebRX, WebSDR) …", self._open_webrx)
+            self._button(g, "🌐 Webbmottagare på nätet …", self._open_webrx).set_tooltip_text(
+                "KiwiSDR, OpenWebRX och WebSDR runt om i världen")
             self.agc_row = self._switch(g, "Automatisk förstärkning", c["auto_gain"], self._on_auto_gain)
             self.hw_rows = [self.agc_row]
             self.gain_row = self._spin(g, "Förstärkning (dB)", 0, 49.6, 0.5, c["gain"], 1, self._on_gain)
@@ -4702,6 +4841,11 @@ def run_gui(args):
                         skins.index(c.get("skin")) if c.get("skin") in skins else 0, self._on_skin)
             self._combo(g, "Färgskala", cmaps, cmaps.index(c["colormap"]) if c["colormap"] in cmaps else 0,
                         self._on_colormap)
+            lagen = ["auto", "normal", "kompakt"]
+            self.skarm_row = self._combo(g, "Skärmanpassning", ["Automatiskt", "Normal", "Kompakt"],
+                                         lagen.index(c.get("skarm_lage")) if c.get("skarm_lage") in lagen else 0,
+                                         self._on_skarm_lage)
+            self._skarm_subtitle()
             box.append(g)
 
             g = self._section("Frontpanel", "Riktiga reglage och displayer som styr mottagaren")
@@ -4743,7 +4887,8 @@ def run_gui(args):
             self._spin(g, "Max lyssningstid (s)", 0, 600, 5, c.get("scan_max_listen", 0), 0,
                        lambda v: self._set_conf("scan_max_listen", v), "0 = stanna så länge signalen finns")
             self.scan_prio_row = Adw.ComboRow(title="Prioritetskanal")
-            self.scan_prio_row.set_subtitle("Kollas hela tiden och tar över när den hörs")
+            self.scan_prio_row.set_use_subtitle(True)
+            self.scan_prio_row.set_tooltip_text("Kollas hela tiden och tar över när den hörs")
             self.scan_prio_row.connect("notify::selected", lambda r, _p: self._on_scan_prio(r.get_selected()))
             g.add(self.scan_prio_row)
             self._spin(g, "Kolla prioritet var (s)", 0.5, 30, 0.5, c.get("scan_prio_s", 2.0), 1,
@@ -4783,7 +4928,7 @@ def run_gui(args):
             self._button(g, "Gå till ACARS (131,7 MHz)", lambda: self._goto_decoder("ACARS"))
             self._button(g, "Gå till AIS (162 MHz)", lambda: self._goto_decoder("AIS"))
             self._button(g, "Gå till APRS (144,800 MHz)", lambda: self._goto_decoder("APRS"))
-            self._button(g, "📊 Aktivitetskarta (värmekarta över ett band)", self._open_activity)
+            self._button(g, "📊 Aktivitetskarta", self._open_activity).set_tooltip_text("Värmekarta över ett band")
             self._button(g, "🚢 Visa fartyg på karta (AIS)", self._open_ship_map)
             self._button(g, "✈ Öppna Flygradar (ADS-B, 1090 MHz)", self._open_radar)
             box.append(g)
@@ -4840,7 +4985,8 @@ def run_gui(args):
             v.set_margin_end(6)
             tb = Gtk.Box(spacing=6)
             self.filter_entry = Gtk.SearchEntry(hexpand=True)
-            self.filter_entry.set_placeholder_text("Filter, t.ex.  freq>144 freq<146  bw<25k  peak>-50  typ~NFM  aktiv")
+            self.filter_entry.set_placeholder_text("Filter, t.ex.  freq>144  bw<25k  typ~NFM  aktiv")
+            self.filter_entry.set_tooltip_text("Filter: freq>144 freq<146  bw<25k  peak>-50  typ~NFM  aktiv")
             self.filter_entry.connect("search-changed", self._on_filter_changed)
             tb.append(self.filter_entry)
             for label, cb in (("Spara som bokmärke", self._log_to_bookmark), ("Exportera CSV", self._export_csv),
@@ -5036,8 +5182,10 @@ def run_gui(args):
             if show and self.an_win is None:
                 rp = self.right_paned
                 H = rp.get_height()
-                if H > 500 and H - rp.get_position() < 370:
-                    rp.set_position(H - 370)       # ge analysen plats
+                want = min(370, int(H * 0.55))
+                if not self._bottom_grown and H > 400 and H - rp.get_position() < want:
+                    rp.set_position(H - want)      # ge analysen plats (en gång – sen bestämmer användaren)
+                self._bottom_grown = True
             if not self.engine.running:
                 self.toast("Starta mottagningen för att analysera signalen")
             self.view.queue_draw()
@@ -5050,7 +5198,7 @@ def run_gui(args):
             if self.an_win is None:
                 self.an_holder.remove(p)
                 self.an_holder.append(self.an_placeholder)
-                win = Adw.Window(title="Signalanalys – Radiospanaren", transient_for=self,
+                win = Adw.Window(title="Signalanalys – Signalspanaren", transient_for=self,
                                  default_width=self.conf.get("an_win", [760, 520])[0],
                                  default_height=self.conf.get("an_win", [760, 520])[1])
                 tv = Adw.ToolbarView()
@@ -5584,6 +5732,26 @@ def run_gui(args):
             self.conf["theme"] = i
             apply_theme(i)
             apply_skin(self.conf.get("skin", "spanare"), i)
+
+        def _skarm_subtitle(self, kompakt=None):
+            if kompakt is None:
+                kompakt = self.has_css_class("kompakt")
+            w, h, s = self.skarm.skarm(self)
+            self.skarm_row.set_subtitle(f"{w}×{h} · {'kompakt' if kompakt else 'normal'}")
+            self.skarm_row.set_tooltip_text(f"Skärmen är {w}×{h} bildpunkter (skala {s}). Automatiskt = kompakt "
+                                            f"läge när skärmen är lägre än {self.skarm.KOMPAKT_HOJD} bildpunkter.")
+
+        def _on_skarm_lage(self, i):
+            lage = ["auto", "normal", "kompakt"][i]
+            self.conf["skarm_lage"] = lage
+            on = self.skarm.ar_kompakt(lage, self)
+            self.skarm.satt_kompakt(self, on)
+            self._skarm_subtitle(on)
+            log.info("Skärmanpassning: %s (%s, %s läge)", lage, self.skarm.beskriv(self), "kompakt" if on else "normalt")
+
+        def _on_ny_skarm(self, on):
+            if hasattr(self, "skarm_row"):
+                self._skarm_subtitle(on)
 
         def _on_skin(self, i):
             name = list(SKINS)[i]
@@ -6724,8 +6892,13 @@ def run_gui(args):
                 if self.panel_win is not None:
                     self.panel_win.close()
                     self.panel_win = None
-                self.conf["window"] = [self.get_width(), self.get_height()]
+                self.conf["window_max"] = self.is_maximized()
+                if not self.is_maximized():
+                    self.conf["window"] = [self.get_width(), self.get_height()]
                 self.conf["sidebar_width"] = self.outer.get_position()
+                rp = self.right_paned
+                if rp.get_height() > 0:
+                    self.conf["bottom_height"] = rp.get_property("max-position") - rp.get_position()
                 if self.ship_win is not None:
                     self.conf["ship_map_view"] = list(self.ship_win.mp.view())
                 save_conf(self.conf)
@@ -6807,7 +6980,11 @@ def run_gui(args):
                                  "border-radius: 4px; padding: 0 3px; font-size: 8pt; font-weight: bold; } "
                                  ".wf-controls { background: rgba(0,0,0,0.55); border-radius: 6px; padding: 2px; } "
                                  ".wf-controls button { min-width: 28px; min-height: 22px; padding: 0 4px; "
-                                 "font-size: 11pt; }")
+                                 "font-size: 11pt; } "
+                                 "paned.delare > separator { min-width: 6px; min-height: 6px; "
+                                 "background-color: alpha(currentColor, 0.10); } "
+                                 "paned.delare > separator:hover { background-color: alpha(@accent_color, 0.45); } "
+                                 "paned.nedre-delare > separator { min-height: 8px; }")
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css,
                                                       Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             if os.path.exists(CSS_FILE):
@@ -6820,6 +6997,8 @@ def run_gui(args):
                 except Exception as ex:
                     log.error("Fel i %s: %s", CSS_FILE, ex)
             conf = load_conf()
+            import skarm
+            skarm.installera()
             apply_theme(conf.get("theme", 0))
             apply_skin(conf.get("skin", "spanare"), conf.get("theme", 0))
             Adw.StyleManager.get_default().connect(
@@ -6974,7 +7153,7 @@ def selftest_iq():
     spela upp dem med FileSource och kontrollera frekvens, mittfrekvens och nivå."""
     import tempfile
     ok = True
-    with tempfile.TemporaryDirectory(prefix="radiospanaren-iq-") as d:
+    with tempfile.TemporaryDirectory(prefix="signalspanaren-iq-") as d:
         t = np.arange(BLOCK) / SR
 
         def tone(f, k):
@@ -7175,8 +7354,8 @@ def selftest(seconds=4.0):
 def main():
     import argparse
     p = argparse.ArgumentParser(
-        prog="radiospanaren",
-        description="Radiospanaren – SDR-mottagare, radioskanner och signallogg. Se: radiospanaren --manual")
+        prog="signalspanaren",
+        description="Signalspanaren – SDR-mottagare, radioskanner och signallogg. Se: signalspanaren --manual")
     p.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
     p.add_argument("--manual", action="store_true", help="visa manualen")
     p.add_argument("--rapport", action="store_true", help="skriv ut en felrapport (för att klistra in i Claude Code)")
@@ -7233,6 +7412,8 @@ def main():
         args.source = "sim"
 
     setup_logging(verbose=args.debug)
+    for old, new in _MIGRATED:
+        log.info("Namnbyte till Signalspanaren: flyttade %s → %s", old, new)
 
     if args.manual:
         try:

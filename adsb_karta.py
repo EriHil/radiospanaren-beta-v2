@@ -3,13 +3,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 erihil
 """
-Flygradar – ADS-B-mottagare med karta. Del av Radiospanaren.
+Flygradar – ADS-B-mottagare med karta. Del av Signalspanaren.
 
 Tar emot flygplanens ADS-B-sändningar på 1090 MHz med en RTL-SDR och visar dem
 på en OpenStreetMap-karta (libshumate) och i en tabell. Utan libshumate visas en
 enkel radarvy i stället.
 
-Starta:  flygradar            (eller knappen "Öppna Flygradar" i Radiospanaren)
+Starta:  flygradar            (eller knappen "Öppna Flygradar" i Signalspanaren)
          flygradar --simulator --start
          flygradar --sjalvtest
 """
@@ -25,11 +25,11 @@ import threading
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, APP_DIR)
-import radiospanaren as R      # noqa: E402  (källor, loggning, felrapport)
+import signalspanaren as R      # noqa: E402  (källor, loggning, felrapport)
 import adsb as A               # noqa: E402
 
 log = R.log
-RADAR_ID = "se.eh.Radiospanaren.Flygradar"
+RADAR_ID = "se.eh.Signalspanaren.Flygradar"
 RADAR_CONF = os.path.join(R.CONF_DIR, "flygradar.json")
 SOURCE_NAMES = ["RTL-SDR (USB)", "rtl_tcp (nätverk)", "Simulator (test utan SDR)"]
 SOURCES = ["rtl", "tcp", "sim"]
@@ -113,7 +113,7 @@ def map_install_cmd():
         txt = "sudo apt install gir1.2-shumate-1.0"
     else:
         return None, "Installera libshumate (GObject-introspection, Shumate 1.0) med systemets pakethanterare."
-    if os.environ.get("RADIOSPANAREN_TORRKORNING"):        # test: kör inget på riktigt
+    if os.environ.get("SIGNALSPANAREN_TORRKORNING"):        # test: kör inget på riktigt
         return ["true"], txt
     if not shutil.which("pkexec"):
         return None, txt
@@ -133,7 +133,7 @@ def run_gui(args):
     gi.require_version("Adw", "1")
     from gi.repository import Gtk, Adw, Gdk, GLib, Gio, GObject
     try:
-        if os.environ.get("RADIOSPANAREN_UTAN_KARTA"):
+        if os.environ.get("SIGNALSPANAREN_UTAN_KARTA"):
             raise ImportError("avstängd för test")
         gi.require_version("Shumate", "1.0")
         from gi.repository import Shumate
@@ -271,7 +271,7 @@ def run_gui(args):
     # ── Huvudfönster ──
     class RadarWindow(Adw.ApplicationWindow):
         def __init__(self, app, conf):
-            super().__init__(application=app, title="Flygradar – Radiospanaren")
+            super().__init__(application=app, title="Flygradar – Signalspanaren")
             self.conf = conf
             self.rx = None
             self.planes = {}          # icao -> {"data", "row", "marker", "icon", "label", "path"}
@@ -279,7 +279,9 @@ def run_gui(args):
             self.last_valid = 0
             self.last_t = time.time()
             self.auto_centered = False
-            w, h = conf.get("window", [1350, 850])
+            import skarm
+            skarm.installera()
+            w, h = skarm.ryms(*(conf.get("window") or [1350, 850]))
             self.set_default_size(w, h)
 
             self.toasts = Adw.ToastOverlay()
@@ -322,7 +324,7 @@ def run_gui(args):
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             if Shumate is not None:
                 if hasattr(Shumate, "set_user_agent"):
-                    Shumate.set_user_agent(f"Radiospanaren-Flygradar/{R.VERSION} "
+                    Shumate.set_user_agent(f"Signalspanaren-Flygradar/{R.VERSION} "
                                            "(+https://github.com/EriHil/radiospanaren-beta-v2)")
                 self.smap = Shumate.SimpleMap(vexpand=True, hexpand=True)
                 reg = Shumate.MapSourceRegistry.new_with_defaults()
@@ -347,7 +349,7 @@ def run_gui(args):
                 self.map_btn.add_css_class("suggested-action")
                 self.map_btn.connect("clicked", lambda *_: self._confirm_install())
                 bar.append(self.map_btn)
-                if os.environ.get("RADIOSPANAREN_EFTER_KARTINSTALLATION"):
+                if os.environ.get("SIGNALSPANAREN_EFTER_KARTINSTALLATION"):
                     self.map_lbl.set_text("Kartan installerades men kan ändå inte laddas – starta om datorn "
                                           f"eller installera manuellt: {txt}")
                     self.map_btn.set_visible(False)
@@ -408,7 +410,7 @@ def run_gui(args):
                 self.map_lbl.set_text("Installationen avbröts. Kartan är inte installerad.")
             else:
                 log.error("Kartinstallationen misslyckades (kod %d): %s", code, out)
-                self.map_lbl.set_text("Installationen misslyckades – se Radiospanaren → Felsökning → Kopiera felrapport.")
+                self.map_lbl.set_text("Installationen misslyckades – se Signalspanaren → Felsökning → Kopiera felrapport.")
             self.map_btn.set_label("Försök igen")
             self.map_btn.set_sensitive(True)
             return False
@@ -420,7 +422,7 @@ def run_gui(args):
             if was_running:
                 argv.append("--start")
             log.info("Startar om: %s", " ".join(argv))
-            os.environ["RADIOSPANAREN_EFTER_KARTINSTALLATION"] = "1"     # högst en omstart
+            os.environ["SIGNALSPANAREN_EFTER_KARTINSTALLATION"] = "1"     # högst en omstart
             os.execv(sys.executable, argv)
 
         def center_on(self, lat, lon, zoom=None):
@@ -756,13 +758,13 @@ def run_gui(args):
                                  lambda: self.win.save_screenshot(a.skarmbild[0]) and False)
             log.info("Flygradar öppnad (karta: %s)", "libshumate" if Shumate else "enkel radarvy")
 
-    log.info("=== Flygradar (Radiospanaren %s) startar ===", R.VERSION)
+    log.info("=== Flygradar (Signalspanaren %s) startar ===", R.VERSION)
     return RadarApp(args).run([sys.argv[0]])
 
 
 def main():
-    p = argparse.ArgumentParser(prog="flygradar", description="Flygradar – ADS-B-mottagare med karta (Radiospanaren)")
-    p.add_argument("--version", action="version", version=f"Flygradar (Radiospanaren {R.VERSION})")
+    p = argparse.ArgumentParser(prog="flygradar", description="Flygradar – ADS-B-mottagare med karta (Signalspanaren)")
+    p.add_argument("--version", action="version", version=f"Flygradar (Signalspanaren {R.VERSION})")
     p.add_argument("--kalla", dest="source", choices=SOURCES, help="mottagarkälla: rtl, tcp eller sim")
     p.add_argument("--simulator", action="store_true", help="samma som --kalla sim")
     p.add_argument("--tcp", metavar="VÄRD:PORT", help="anslut till en rtl_tcp-server")

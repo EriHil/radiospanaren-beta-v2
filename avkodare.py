@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 erihil
 """
-Avkodare och signalidentifiering för Radiospanaren.
+Avkodare och signalidentifiering för Signalspanaren.
 
   • KNOWN_SIGNALS / identify(): känner igen signaltyper utifrån frekvens
   • ACARS: AM-modulerad MSK, 2400 bit/s (toner 1200/2400 Hz), avkodas helt
@@ -21,7 +21,7 @@ from collections import deque
 import numpy as np
 from scipy.signal import firwin, oaconvolve, butter, sosfiltfilt, hilbert
 
-log = logging.getLogger("radiospanaren")
+log = logging.getLogger("signalspanaren")
 
 # ── Kända signaler (MHz, tolerans kHz, namn) ───────────────────────────
 ACARS_FREQS = [129.125, 130.025, 130.450, 131.125, 131.450, 131.525, 131.550,
@@ -121,7 +121,7 @@ def _parity_ok(b):
     return bin(b).count("1") % 2 == 1
 
 
-def build_acars_frame(reg=".SE-RTD", label="H1", blk="3", text="M01ASK1234HEJ FRAN RADIOSPANAREN",
+def build_acars_frame(reg=".SE-RTD", label="H1", blk="3", text="M01ASK1234HEJ FRAN SIGNALSPANAREN",
                       mode="2", ack=NAK):
     """Bygger ett ACARS-block (byte-lista) enligt ARINC 618."""
     addr = reg.rjust(7, ".")[:7]
@@ -648,7 +648,7 @@ def make_ais_payload(mmsi=265123456, lat=59.3293, lon=18.0686, sog=12.3, cog=87.
     return bytes(sum(bits[i + j] << (7 - j) for j in range(8)) for i in range(0, len(bits), 8))
 
 
-def make_ais5_payload(mmsi=265123456, call="SABC", name="RADIOSPANAREN", ship_type=35, dest="STOCKHOLM"):
+def make_ais5_payload(mmsi=265123456, call="SABC", name="SIGNALSPANAREN", ship_type=35, dest="STOCKHOLM"):
     def t6(txt, n):
         txt = (txt.upper() + "@" * n)[:n]
         out = []
