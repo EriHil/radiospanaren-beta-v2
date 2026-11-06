@@ -18,7 +18,7 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --socket=pulseaudio
-  - --share=network          # OSM-kartrutor, rtl_tcp och webbgränssnittet
+  - --share=network          # OSM-kartrutor, rtl_tcp, KiwiSDR och webbgränssnittet
   - --device=all             # rå USB-åtkomst till RTL-SDR-dongeln
   - --filesystem=xdg-music:create   # inspelningar hamnar i ~/Musik/Radiospanaren
   - --env=PYTHONPATH=/app/lib/python3.14/site-packages
@@ -91,7 +91,7 @@ modules:
     build-commands:
       - install -d /app/share/radiospanaren
       - install -m644 radiospanaren.py avkodare.py adsb.py adsb_karta.py kartvy.py aktivitet.py
-        analys.py analysavkodare.py iqfil.py signaldb.py MANUAL.txt /app/share/radiospanaren/
+        analys.py analysavkodare.py iqfil.py kiwisdr.py signaldb.py MANUAL.txt /app/share/radiospanaren/
       - |
         cat > /app/bin/radiospanaren <<'EOF'
         #!/bin/sh

@@ -15,7 +15,7 @@ Radiospanaren gör en billig RTL-SDR-dongel till en komplett mottagarstation med
 - Zoom-FFT: när du zoomar räknas spektrumet om med finare upplösning (ner till cirka 12 Hz), så att FT8, CW och SSB syns.
 - Demodulering: WFM, NFM, AM, USB, LSB och CW. Squelch, AGC och de-emfas.
 - HF (0,5–28,8 MHz) via direktsampling (Q-grenen).
-- Källor: RTL-SDR via USB, rtl_tcp (en dongel på en annan dator) och en inbyggd simulator för test utan hårdvara.
+- Källor: RTL-SDR via USB, rtl_tcp (en dongel på en annan dator), KiwiSDR (webb-SDR:er på nätet, 0–30 MHz) och en inbyggd simulator för test utan hårdvara.
 - Bandplan i vattenfallet: rundradio, amatörband, flyg, marin VHF, PMR446, militärflyg UHF, Rakel/TETRA och mer.
 
 **Skanner**
