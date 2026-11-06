@@ -28,7 +28,7 @@ import threading
 
 APP_NAME = "Radiospanaren"
 APP_ID = "se.eh.Radiospanaren"
-VERSION = "2.3.0"
+VERSION = "2.4.0"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "radiospanaren")
@@ -194,6 +194,7 @@ try:
     import avkodare
     import analys
     import analysavkodare
+    import iqfil
 except ImportError as _e:  # pragma: no cover
     setup_logging()
     log.critical("Saknar Python-paket: %s. Installera med: sudo dnf install python3-numpy python3-scipy", _e)
@@ -215,8 +216,10 @@ DEFAULT_BW = {"WFM": 180000, "NFM": 12500, "AM": 8000, "USB": 2700, "LSB": 2700,
 DEFAULT_STEP = {"WFM": 100000, "NFM": 12500, "AM": 5000, "USB": 100, "LSB": 100, "CW": 10}
 STEPS = [0, 10, 100, 1000, 5000, 9000, 10000, 12500, 25000, 100000]
 STEP_NAMES = ["Auto", "10 Hz", "100 Hz", "1 kHz", "5 kHz", "9 kHz", "10 kHz", "12,5 kHz", "25 kHz", "100 kHz"]
-SOURCES = ["rtl", "tcp", "sim"]
-SOURCE_NAMES = ["RTL-SDR (USB)", "rtl_tcp (nätverk)", "Simulator (test utan SDR)"]
+IQ_FORMATS = [("SigMF cu8 – 8 bitar, 3 MB/s", "sigmf_cu8"), ("SigMF cf32 – flyttal, 12 MB/s", "sigmf_cf32"),
+              ("WAV 16 bitar (SDR++/SDR#), 6 MB/s", "wav16")]
+SOURCES = ["rtl", "tcp", "sim", "file"]
+SOURCE_NAMES = ["RTL-SDR (USB)", "rtl_tcp (nätverk)", "Simulator (test utan SDR)", "IQ-fil (uppspelning)"]
 
 # Bandplan (MHz): från, till, namn
 BANDPLAN = [
@@ -258,7 +261,8 @@ DEFAULT_CONF = {
     "colormap": "spanare", "theme": 0, "skin": "spanare", "analys_bw_idx": 0, "analys_follow": False, "scan_mode": 0, "scan_start": "144.0", "scan_stop": "146.0",
     "scan_step_khz": 12.5, "scan_hold": 2.0, "scan_max_listen": 0.0, "scan_dwell_ms": 300, "det_thresh": 12.0,
     "det_enabled": True, "auto_rec": False, "web_enabled": False, "web_port": 8073,
-    "web_public": False, "lockout": [], "bookmarks": DEFAULT_BOOKMARKS, "window": [1400, 900], "sidebar_width": 330,
+    "web_public": False, "iq_format": 0, "play_file": "", "play_speed": 0, "play_loop": False,
+    "play_override": {}, "lockout": [], "bookmarks": DEFAULT_BOOKMARKS, "window": [1400, 900], "sidebar_width": 330,
 }
 
 COLORMAPS = {
@@ -827,12 +831,32 @@ def _sim_ship_payload(sim, kind):
 SimSource._next_ais = _sim_ship_payload
 
 
+def open_iq_reader(conf):
+    path = conf.get("play_file") or ""
+    if not path or not os.path.exists(path):
+        raise SourceError("Ingen IQ-fil vald (Mottagare → IQ-fil → Välj …)" if not path else
+                          f"IQ-filen finns inte: {path}")
+    extra = conf.get("play_override", {}).get(path, {})
+    try:
+        return iqfil.IQReader(path, rate=extra.get("rate"), center=extra.get("center"))
+    except Exception as ex:
+        raise SourceError(f"Kunde inte läsa IQ-filen {os.path.basename(path)}: {ex}")
+
+
 def make_source(conf):
     k = conf["source"]
     if k == "rtl":
         return RtlSource()
     if k == "tcp":
         return TcpSource(conf["tcp_addr"])
+    if k == "file":
+        r = open_iq_reader(conf)
+        if not r.rate:
+            raise SourceError("Samplingstakten för IQ-filen är okänd – ange den när du väljer filen")
+        sp = {0: 1.0, 1: 2.0, 2: 4.0, 3: 8.0, 4: 0.0}.get(conf.get("play_speed", 0), 1.0)
+        log.info("Spelar upp %s (%s, %.0f S/s, %.1f s, mitt %s)", r.path, r.info, r.rate, r.seconds(),
+                 f"{r.center_at(0) / 1e6:.6f} MHz" if r.center_at(0) else "okänd")
+        return iqfil.FileSource(r, SR, BLOCK, speed=sp, loop=bool(conf.get("play_loop", False)))
     return SimSource()
 
 
@@ -916,6 +940,8 @@ class Engine:
         self.activity = None
 
     def set_center(self, c):
+        if getattr(self.source, "fixed_center", False):
+            return                          # uppspelning: filen styr mittfrekvensen
         c = max(1000.0, float(c))
         self.center = c
         if self.source:
@@ -957,20 +983,24 @@ class Engine:
             log.info("Ljudinspelning sparad: %s", p)
         return p
 
-    def start_iq(self, path):
+    def start_iq(self, writer):
+        """writer: iqfil.SigMFWriter eller iqfil.WavWriter."""
         with self.rec_lock:
             if self.rec_iq:
                 return
-            self.rec_iq, self.rec_iq_path = open(path, "wb"), path
-        log.info("IQ-inspelning startad: %s (uint8 IQ, %d S/s)", path, SR)
+            self.rec_iq, self.rec_iq_path = writer, getattr(writer, "path", "")
+        log.info("IQ-inspelning startad: %s (%d S/s)", self.rec_iq_path, SR)
 
     def stop_iq(self):
         with self.rec_lock:
             f, p = self.rec_iq, self.rec_iq_path
             self.rec_iq = None
         if f:
-            f.close()
-            log.info("IQ-inspelning sparad: %s", p)
+            try:
+                p = f.close() or p
+                log.info("IQ-inspelning sparad: %s (%.1f s)", p, f.seconds())
+            except Exception:
+                log.exception("Kunde inte avsluta IQ-inspelningen")
         return p
 
     # ── filter ──
@@ -1066,6 +1096,10 @@ class Engine:
                     st["overruns"] += 1
                     if st["overruns"] % 50 == 1:
                         log.warning("DSP hinner inte med (%.1f ms per block, max %.1f)", dt, BLOCK / SR * 1000)
+        except EOFError:
+            log.info("Uppspelningen nådde slutet av filen")
+            if self.on_event:
+                self.on_event("play_end", None)
         except SourceError as e:
             log.error("%s", e)
             if self.on_error:
@@ -1118,10 +1152,20 @@ class Engine:
 
     def _process(self, x, c, raw):
         now = time.time()
-        if raw is not None and self.rec_iq:
+        if getattr(self.source, "fixed_center", False) and abs(c - self.center) > 1:
+            # uppspelning: filen bestämmer mittfrekvensen – behåll den inställda (absoluta) frekvensen
+            self.offset += self.center - c
+            self.center = c
+        if self.rec_iq:
             with self.rec_lock:
                 if self.rec_iq:
-                    self.rec_iq.write(raw.tobytes())
+                    try:
+                        self.rec_iq.write(x, c, raw)
+                    except OSError as ex:
+                        log.error("IQ-inspelningen stoppades: %s", ex)
+                        f, self.rec_iq = self.rec_iq, None
+                        if self.on_event:
+                            self.on_event("iq_error", str(ex))
 
         # Spektrum (Welch, 16 segment)
         seg = x.reshape(-1, FFT_N) * self.win
@@ -3760,15 +3804,49 @@ def run_gui(args):
             self.tcp_row.set_show_apply_button(True)
             self.tcp_row.connect("apply", lambda r: self._set_conf("tcp_addr", r.get_text().strip()))
             g.add(self.tcp_row)
-            self._switch(g, "Automatisk förstärkning", c["auto_gain"], self._on_auto_gain)
+            self.hw_rows = [self._switch(g, "Automatisk förstärkning", c["auto_gain"], self._on_auto_gain)]
             self.gain_row = self._spin(g, "Förstärkning (dB)", 0, 49.6, 0.5, c["gain"], 1, self._on_gain)
             self.gain_row.set_sensitive(not c["auto_gain"])
             self.ppm_row = self._spin(g, "Frekvenskorrigering (ppm)", -200, 200, 1, c["ppm"], 0, self._on_ppm)
-            self._button(g, "Kalibrera frekvens (ppm) …", self._open_calibration)
-            self._combo(g, "Direktsampling (HF under 28 MHz)", ["Av", "I-gren", "Q-gren (RTL-SDR v3)"], c["direct"],
-                        self._on_direct)
-            self._switch(g, "Bias-T (matar antennförstärkare)", c["biast"], self._on_biast)
+            self.hw_rows += [self.gain_row, self.ppm_row,
+                             self._button(g, "Kalibrera frekvens (ppm) …", self._open_calibration),
+                             self._combo(g, "Direktsampling (HF under 28 MHz)",
+                                         ["Av", "I-gren", "Q-gren (RTL-SDR v3)"], c["direct"], self._on_direct),
+                             self._switch(g, "Bias-T (matar antennförstärkare)", c["biast"], self._on_biast)]
             box.append(g)
+
+            g = self.play_group = self._section("Uppspelning av IQ-fil",
+                                                "SigMF, WAV (SDR++/SDR#), rtl_sdr .cu8, .cs8, .cs16, .cf32/.cfile")
+            self.play_file_row = Adw.ActionRow(title="Ingen fil vald")
+            self.play_file_row.set_subtitle_lines(3)
+            b = Gtk.Button(label="Välj …", valign=Gtk.Align.CENTER)
+            b.connect("clicked", lambda *_: self._choose_play_file())
+            self.play_file_row.add_suffix(b)
+            g.add(self.play_file_row)
+            pos_row = Adw.ActionRow(title="Position")
+            self.play_pause_btn = Gtk.Button(icon_name="media-playback-pause-symbolic", valign=Gtk.Align.CENTER,
+                                             tooltip_text="Paus / fortsätt")
+            self.play_pause_btn.connect("clicked", lambda *_: self._toggle_play_pause())
+            pos_row.add_prefix(self.play_pause_btn)
+            self.play_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1, 0.1)
+            self.play_scale.set_draw_value(False)
+            self.play_scale.set_hexpand(True)
+            self.play_scale.set_valign(Gtk.Align.CENTER)
+            self.play_scale.set_size_request(130, -1)
+            self.play_scale.connect("change-value", self._on_play_seek)
+            pos_row.add_suffix(self.play_scale)
+            self.play_pos_lbl = Gtk.Label(label="0:00 / 0:00", valign=Gtk.Align.CENTER)
+            self.play_pos_lbl.add_css_class("numeric")
+            pos_row.add_suffix(self.play_pos_lbl)
+            pos_row.set_title("")
+            g.add(pos_row)
+            self._combo(g, "Hastighet", ["1× (realtid)", "2×", "4×", "8×", "Så fort det går"], c["play_speed"],
+                        self._on_play_speed)
+            self._switch(g, "Spela i slinga", c["play_loop"], self._on_play_loop)
+            self._button(g, "Gå till filens mittfrekvens", self._play_goto_center)
+            box.append(g)
+            self._update_play_info()
+            self._show_source_rows(c["source"])
 
             g = self._section("Demodulator")
             self.bw_row = self._spin(g, "Bandbredd (Hz)", 100, 250000, 100, self.engine.bw, 0, self._on_bw)
@@ -3849,6 +3927,8 @@ def run_gui(args):
 
             g = self._section("Inspelning", f"Sparas i {rec_dir()}")
             self._switch(g, "Spela in automatiskt vid signal", c["auto_rec"], self._on_auto_rec)
+            self._combo(g, "IQ-format", [n for n, _k in IQ_FORMATS], c["iq_format"],
+                        lambda i: self._set_conf("iq_format", i))
             self.iq_btn = self._button(g, "Starta IQ-inspelning", self._toggle_iq)
             self._button(g, "Öppna inspelningsmappen", lambda: self._open_path(rec_dir()))
             box.append(g)
@@ -4106,7 +4186,10 @@ def run_gui(args):
         def tune(self, freq, mode=None, keep_center=False):
             e = self.engine
             freq = float(max(1e4, freq))
-            if self.conf.get("direct") and freq > 28.8e6 >= self.freq:
+            playing = e.running and getattr(e.source, "fixed_center", False)
+            if playing:
+                pass                                         # uppspelning: direktsampling spelar ingen roll
+            elif self.conf.get("direct") and freq > 28.8e6 >= self.freq:
                 self.toast("Direktsampling är på – den tar bara emot under 28,8 MHz. Stäng av den för VHF/UHF.")
             elif not self.conf.get("direct") and freq < 24e6 <= self.freq:
                 self.toast("Under 24 MHz behövs direktsampling (Mottagare → Direktsampling → Q-gren)")
@@ -4114,6 +4197,13 @@ def run_gui(args):
                 self.set_mode(mode)
             d = freq - e.center
             ok_offset = abs(d) <= SR * 0.42 and abs(d) >= e.bw / 2 + 3000
+            if e.running and getattr(e.source, "fixed_center", False):
+                if abs(d) > SR * 0.48:                      # filen styr mitten – kan inte stämma utanför den
+                    self.toast(f"Utanför inspelningen ({(e.center - SR / 2) / 1e6:.3f}–"
+                               f"{(e.center + SR / 2) / 1e6:.3f} MHz)")
+                    freq = e.center + math.copysign(SR * 0.48, d)
+                    d = freq - e.center
+                ok_offset = True
             if not (ok_offset or keep_center):
                 newc = freq + SR * 0.15
                 e.set_center(newc)
@@ -4131,6 +4221,7 @@ def run_gui(args):
         def set_center_keep(self, c):
             e = self.engine
             e.set_center(c)
+            c = e.center                                     # oförändrad vid uppspelning
             d = self.freq - c
             if abs(d) > SR * 0.45:
                 self.freq = c + math.copysign(SR * 0.45, d)
@@ -4208,8 +4299,186 @@ def run_gui(args):
 
         def _on_source(self, i):
             self.conf["source"] = SOURCES[i]
+            self._show_source_rows(SOURCES[i])
             if self.engine.running:
                 self.toast("Ny källa används nästa gång du startar")
+            elif SOURCES[i] == "file" and not self.conf.get("play_file"):
+                self._choose_play_file()
+
+        def _show_source_rows(self, src):
+            self.play_group.set_visible(src == "file")
+            self.tcp_row.set_visible(src == "tcp")
+            for r in self.hw_rows:
+                r.set_visible(src != "file")
+
+        # ── uppspelning av IQ-fil ──
+        def _playing(self):
+            s = self.engine.source
+            return s if (self.engine.running and isinstance(s, iqfil.FileSource)) else None
+
+        def _choose_play_file(self):
+            dlg = Gtk.FileDialog(title="Välj IQ-fil att spela upp")
+            flt = Gtk.FileFilter()
+            flt.set_name("IQ-filer")
+            for pat in ("*.sigmf-meta", "*.sigmf-data", "*.wav", "*.WAV", "*.cu8", "*.raw", "*.bin", "*.iq",
+                        "*.cs8", "*.ci8", "*.cs16", "*.ci16", "*.cf32", "*.cfile", "*.fc32"):
+                flt.add_pattern(pat)
+            alla = Gtk.FileFilter()
+            alla.set_name("Alla filer")
+            alla.add_pattern("*")
+            fl = Gio.ListStore.new(Gtk.FileFilter)
+            fl.append(flt)
+            fl.append(alla)
+            dlg.set_filters(fl)
+            dlg.set_default_filter(flt)
+            cur = self.conf.get("play_file")
+            try:
+                dlg.set_initial_folder(Gio.File.new_for_path(os.path.dirname(cur) if cur and os.path.exists(cur)
+                                                             else rec_dir()))
+            except Exception:
+                pass
+
+            def done(d, res):
+                try:
+                    f = d.open_finish(res)
+                except GLib.Error:
+                    return
+                self._set_play_file(f.get_path())
+            dlg.open(self, None, done)
+
+        def _set_play_file(self, path, ask=True):
+            try:
+                r = iqfil.IQReader(path)
+            except Exception as ex:
+                log.error("Kunde inte läsa IQ-filen %s: %s", path, ex)
+                self.toast(f"Kunde inte läsa filen: {ex}", timeout=8)
+                return
+            ov = self.conf.setdefault("play_override", {}).get(path, {})
+            if ask and (not (r.rate or ov.get("rate")) or not (r.center_at(0) or ov.get("center"))):
+                self._ask_play_params(path, r, ov)
+                return
+            self.conf["play_file"] = path
+            log.info("IQ-fil vald: %s (%s, %s S/s, %.1f s)", path, r.info, r.rate or ov.get("rate"), r.seconds())
+            self._update_play_info()
+            if self.engine.running and isinstance(self.engine.source, iqfil.FileSource):
+                self.btn_start.set_active(False)
+                self.btn_start.set_active(True)
+
+        def _ask_play_params(self, path, r, ov):
+            """Filen saknar takt och/eller mittfrekvens (vanligt för rå .cu8/.cf32) – fråga användaren."""
+            gf, gr = iqfil.guess_from_name(path)
+            dlg = Adw.MessageDialog(transient_for=self, heading="Uppgifter saknas för IQ-filen",
+                                    body=f"{os.path.basename(path)}\n\nRåa IQ-filer innehåller inte samplingstakt "
+                                         "och mittfrekvens. Ange dem (rtl_sdr använder ofta 2048000 eller 2400000 S/s).")
+            lb = Gtk.ListBox()
+            lb.add_css_class("boxed-list")
+            rate = Adw.EntryRow(title="Samplingstakt (S/s)")
+            rate.set_text(str(int(ov.get("rate") or r.rate or gr or 2048000)))
+            cen = Adw.EntryRow(title="Mittfrekvens (MHz)")
+            c0 = ov.get("center") or r.center_at(0) or gf
+            cen.set_text(f"{c0 / 1e6:.6f}" if c0 else "")
+            lb.append(rate)
+            lb.append(cen)
+            dlg.set_extra_child(lb)
+            dlg.add_response("cancel", "Avbryt")
+            dlg.add_response("ok", "Använd")
+            dlg.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+            dlg.set_default_response("ok")
+
+            def resp(_d, rid):
+                if rid != "ok":
+                    return
+                try:
+                    rv = float(rate.get_text().replace(",", ".").replace(" ", ""))
+                    cv = parse_freq(cen.get_text()) if cen.get_text().strip() else 0.0
+                    if not 1000 <= rv <= 100e6:
+                        raise ValueError("orimlig samplingstakt")
+                except ValueError as ex:
+                    self.toast(f"Ogiltigt värde: {ex}")
+                    return
+                self.conf["play_override"][path] = {"rate": rv, "center": cv or None}
+                self._set_play_file(path, ask=False)
+            dlg.connect("response", resp)
+            dlg.present()
+
+        def _update_play_info(self):
+            path = self.conf.get("play_file") or ""
+            if not path:
+                self.play_file_row.set_title("Ingen fil vald")
+                self.play_file_row.set_subtitle("Spela in med ”Starta IQ-inspelning” eller välj en fil från "
+                                                "t.ex. SDR++, SDR#, gqrx eller rtl_sdr")
+                return
+            self.play_file_row.set_title(GLib.markup_escape_text(os.path.basename(path)))
+            try:
+                ov = self.conf.get("play_override", {}).get(path, {})
+                r = iqfil.IQReader(path, rate=ov.get("rate"), center=ov.get("center"))
+                c0 = r.center_at(0)
+                caps = len(r.captures)
+                sub = (f"{r.info}, {r.rate / 1e3:.1f} kS/s, " if r.rate else f"{r.info}, okänd takt, ") + \
+                      (f"mitt {c0 / 1e6:.4f} MHz" if c0 else "okänd mittfrekvens") + \
+                      (f" ({caps} frekvenser)" if caps > 1 else "") + \
+                      (f", {self._fmt_t(r.seconds())}" if r.rate else "")
+                if r.rate and abs(r.rate - SR) > 1 and r.rate < SR * 0.5:
+                    sub += f"\nSmal inspelning – bara ±{r.rate / 2e3:.0f} kHz runt mitten har signal"
+                self.play_file_row.set_subtitle(GLib.markup_escape_text(sub))
+                self.play_scale.set_range(0, max(0.1, r.seconds()))
+                self.play_pos_lbl.set_text(f"0:00 / {self._fmt_t(r.seconds())}")
+            except Exception as ex:
+                self.play_file_row.set_subtitle(GLib.markup_escape_text(f"Kan inte läsas: {ex}"))
+
+        @staticmethod
+        def _fmt_t(t):
+            t = int(t)
+            return f"{t // 3600}:{t // 60 % 60:02d}:{t % 60:02d}" if t >= 3600 else f"{t // 60}:{t % 60:02d}"
+
+        def _toggle_play_pause(self):
+            s = self._playing()
+            if not s:
+                self.toast("Starta uppspelningen med ▶ Starta")
+                return
+            s.paused = not s.paused
+            self.play_pause_btn.set_icon_name("media-playback-start-symbolic" if s.paused
+                                              else "media-playback-pause-symbolic")
+
+        def _on_play_seek(self, _scale, _scroll, value):
+            s = self._playing()
+            if s:
+                s.seek(value)
+                self.engine.reset_squelch()
+            return False
+
+        def _on_play_speed(self, i):
+            self.conf["play_speed"] = i
+            s = self._playing()
+            if s:
+                s.speed = {0: 1.0, 1: 2.0, 2: 4.0, 3: 8.0, 4: 0.0}.get(i, 1.0)
+                s.t_next = time.monotonic()
+
+        def _on_play_loop(self, v):
+            self.conf["play_loop"] = v
+            s = self._playing()
+            if s:
+                s.loop = v
+
+        def _play_goto_center(self):
+            s = self._playing()
+            c = s.center if s else None
+            if c is None:
+                try:
+                    c = open_iq_reader(self.conf).center_at(0)
+                except SourceError as ex:
+                    self.toast(str(ex))
+                    return
+            if c:
+                self.tune(c - SR * 0.15 if (not s or (s.r.rate or 0) >= SR * 0.6) else c + 1000)
+
+        def _play_tick(self):
+            s = self._playing()
+            if not s:
+                return
+            t, tot = s.position(), s.r.seconds()
+            self.play_scale.set_value(t)
+            self.play_pos_lbl.set_text(f"{self._fmt_t(t)} / {self._fmt_t(tot)}")
 
         def _src_set(self, k, v):
             if self.engine.running and self.engine.source:
@@ -4424,6 +4693,17 @@ def run_gui(args):
                     src.set("direct", self.conf["direct"])
                 if self.conf["biast"]:
                     src.set("biast", True)
+                if isinstance(src, iqfil.FileSource):
+                    fc = src.center
+                    e.center = fc
+                    span = min(SR, src.r.rate or SR) * 0.45
+                    if abs(self.freq - fc) > span:          # inställd frekvens ligger utanför filen
+                        self.freq = fc - SR * 0.15 if span > SR * 0.3 else fc + 1000
+                        self.conf["freq"] = self.freq
+                    e.offset = self.freq - fc
+                    e.reset_squelch()
+                    self._update_freq_label()
+                    self.play_pause_btn.set_icon_name("media-playback-pause-symbolic")
                 self.audio.start()
                 self._auto_level_pending = True
                 e.start(src)
@@ -4455,6 +4735,13 @@ def run_gui(args):
         def _on_engine_event(self, kind, val):
             if kind == "rec_auto_start":
                 self.toast(f"Spelar in: {os.path.basename(val)}")
+            elif kind == "play_end":
+                self.toast("Uppspelningen är klar")
+                if self.btn_start.get_active():
+                    self.btn_start.set_active(False)
+            elif kind == "iq_error":
+                self.iq_btn.set_title("Starta IQ-inspelning")
+                self.toast(f"IQ-inspelningen stoppades: {val}", timeout=8)
             return False
 
         def _on_rec_toggled(self, btn):
@@ -4489,14 +4776,32 @@ def run_gui(args):
                 self.iq_btn.set_title("Starta IQ-inspelning")
                 self.toast(f"IQ sparad: {os.path.basename(p)}")
                 return
-            if not e.running or not isinstance(e.source, (RtlSource, TcpSource)):
-                self.toast("IQ-inspelning kräver att RTL-SDR eller rtl_tcp är igång")
+            if not e.running:
+                self.toast("Starta mottagningen först")
                 return
-            path = os.path.join(rec_dir(), f"{datetime.datetime.now():%Y%m%d-%H%M%S}_"
-                                           f"{e.center / 1e6:.4f}MHz_{SR}sps.cu8")
-            e.start_iq(path)
+            if isinstance(e.source, iqfil.FileSource):
+                self.toast("Du spelar redan upp en IQ-fil – den behöver inte spelas in igen")
+                return
+            fmt = IQ_FORMATS[min(self.conf.get("iq_format", 0), len(IQ_FORMATS) - 1)][1]
+            base = os.path.join(rec_dir(), f"{datetime.datetime.now():%Y%m%d-%H%M%S}_"
+                                           f"{e.center / 1e6:.4f}MHz_{SR}sps")
+            try:
+                if fmt == "wav16":                          # SDR++-namn: baseband_<Hz>Hz_<tid>_<datum>.wav
+                    w = iqfil.WavWriter(os.path.join(rec_dir(), "baseband"), SR, e.center)
+                    rate_txt = "6 MB"
+                else:
+                    dt = "cu8" if fmt == "sigmf_cu8" else "cf32_le"
+                    w = iqfil.SigMFWriter(base, SR, e.center, dt,
+                                          description=f"{e.source.name}, inställd {self.freq / 1e6:.4f} MHz {e.mode}",
+                                          extra={"core:hw": e.source.name})
+                    rate_txt = "3 MB" if dt == "cu8" else "12 MB"
+            except OSError as ex:
+                log.error("Kunde inte starta IQ-inspelning: %s", ex)
+                self.toast(f"Kunde inte spela in: {ex}")
+                return
+            e.start_iq(w)
             self.iq_btn.set_title("Stoppa IQ-inspelning")
-            self.toast("IQ-inspelning: ca 3 MB per sekund")
+            self.toast(f"IQ-inspelning: ca {rate_txt} per sekund")
 
         def _lock_suggested(self):
             if not self.suggested:
@@ -4746,6 +5051,8 @@ def run_gui(args):
                 if src in ("rtl",):
                     self.btn_start.set_active(False)       # släpp dongeln
                     self.toast("Mottagningen stoppad – Flygradar använder dongeln")
+            if src == "file":
+                src = "rtl"                                # Flygradar spelar inte upp IQ-filer
             cmd = [sys.executable, path, "--kalla", src, "--start"]
             if src == "tcp":
                 cmd += ["--tcp", self.conf["tcp_addr"]]
@@ -4973,6 +5280,7 @@ def run_gui(args):
             except Exception:
                 log.exception("Fel vid uppdatering av signalloggen")
             e = self.engine
+            self._play_tick()
             self.scan_lbl.set_text(self.scanner.status)
             self._ship_tick += 1
             if self.ship_win is not None and self.ship_win.get_visible() and self._ship_tick % 5 == 0:
@@ -5090,6 +5398,12 @@ def run_gui(args):
             a = self.args
             if a.source:
                 conf["source"] = a.source
+            if a.spela:
+                pth = os.path.abspath(a.spela)
+                conf["source"], conf["play_file"] = "file", pth
+                if a.takt or a.mittfrekvens:
+                    conf.setdefault("play_override", {})[pth] = {
+                        "rate": a.takt, "center": parse_freq(a.mittfrekvens) if a.mittfrekvens else None}
             if a.tcp:
                 conf["tcp_addr"] = a.tcp
                 conf["source"] = "tcp"
@@ -5137,6 +5451,65 @@ def run_gui(args):
 # ════════════════════════════════════════════════════════════════════
 # 8. KOMMANDORAD
 # ════════════════════════════════════════════════════════════════════
+def selftest_iq():
+    """IQ-inspelning och uppspelning: skriv SigMF (med omstämning), WAV och rå cf32 i en annan takt,
+    spela upp dem med FileSource och kontrollera frekvens, mittfrekvens och nivå."""
+    import tempfile
+    ok = True
+    with tempfile.TemporaryDirectory(prefix="radiospanaren-iq-") as d:
+        t = np.arange(BLOCK) / SR
+
+        def tone(f, k):
+            return (0.3 * np.exp(2j * np.pi * f * (t + k * BLOCK / SR))).astype(np.complex64)
+
+        def peak(y, rate):
+            S = np.abs(np.fft.fft(y))
+            return np.fft.fftfreq(len(y), 1 / rate)[int(np.argmax(S))]
+
+        def play(path, n_blocks):
+            src = iqfil.FileSource(iqfil.IQReader(path), SR, BLOCK, speed=0)
+            src.open()
+            out = []
+            try:
+                for _ in range(n_blocks):
+                    out.append(src.read())
+            except EOFError:
+                pass
+            return out
+
+        for fmt in ("cu8", "cf32_le", "wav"):
+            base = os.path.join(d, f"t_{fmt}")
+            w = iqfil.WavWriter(base, SR, 145e6) if fmt == "wav" else iqfil.SigMFWriter(base, SR, 145e6, fmt)
+            for k in range(8):
+                w.write(tone(50e3, k), 145e6)
+            if fmt != "wav":
+                for k in range(8):
+                    w.write(tone(-80e3, k), 146e6)        # omstämning mitt i inspelningen
+            path = w.close()
+            if fmt == "wav":
+                path = w.paths[0]
+            r = play(path, 40)
+            good = len(r) >= 7 and abs(peak(r[2][0], SR) - 50e3) < 30 and r[2][1] == 145e6
+            if fmt != "wav":
+                good &= len(r) >= 15 and abs(peak(r[12][0], SR) + 80e3) < 30 and r[12][1] == 146e6
+            lvl = float(np.sqrt(np.mean(np.abs(r[2][0]) ** 2))) if r else 0
+            good &= abs(lvl - 0.3) < 0.02
+            ok &= good
+            print(f"  IQ {fmt:7s} spela in → spela upp: {'OK' if good else 'FEL'} ({len(r)} block, nivå {lvl:.3f})")
+        n = int(48000 * 3)
+        x = (0.3 * np.exp(2j * np.pi * 1000 * np.arange(n) / 48000)).astype(np.complex64)
+        path = os.path.join(d, "ton_48000sps_7.074MHz.cf32")
+        x.tofile(path)
+        r = play(path, 30)
+        y = np.concatenate([b[0] for b in r[2:10]])
+        f = peak(y, SR)
+        lvl = float(np.sqrt(np.mean(np.abs(y) ** 2)))
+        good = abs(f - 1000) < 5 and r[0][1] == 7.074e6 and abs(lvl - 0.3) < 0.02
+        ok &= good
+        print(f"  IQ rå cf32 48 kS/s (namn ger takt/frekvens): {'OK' if good else 'FEL'} (topp {f:.0f} Hz, nivå {lvl:.3f})")
+    return ok
+
+
 def selftest(seconds=4.0):
     """Kör DSP-motorn mot simulatorn utan fönster och skriver ut resultat."""
     print(f"{APP_NAME} självtest – kör simulatorn i {seconds:.0f} s ...")
@@ -5261,13 +5634,14 @@ def selftest(seconds=4.0):
         good = want in text
         dec_ok &= good
         print(f"  Analysavkodare {name}: {'OK' if good else 'FEL'} ({feat['klass'] if feat else '–'})")
+    iq_ok = selftest_iq()
     try:
         import adsb
         adsb_ok = adsb.selftest(verbose=True)
     except Exception as ex:
         print(f"  ADS-B-avkodare: FEL ({ex})")
         adsb_ok = False
-    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok and adsb_ok and rtty_ok and psk_ok and dec_ok
+    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok and adsb_ok and rtty_ok and psk_ok and dec_ok and iq_ok
     print("RESULTAT: " + ("OK" if ok else f"FEL {errors}"))
     log.info("Självtest: %s (%d block, %.1f ms/block)", "OK" if ok else "FEL", st["blocks"], st["proc_ms"])
     return 0 if ok else 1
@@ -5287,12 +5661,15 @@ def main():
     p.add_argument("--sokvagar", action="store_true", help="visa var program, inställningar och loggar ligger")
     p.add_argument("--sjalvtest", action="store_true", help="testa signalbehandlingen med simulatorn (utan fönster)")
     p.add_argument("--aterstall", action="store_true", help="återställ alla inställningar till standard")
-    p.add_argument("--kalla", dest="source", choices=SOURCES, help="mottagarkälla: rtl, tcp eller sim")
+    p.add_argument("--kalla", dest="source", choices=SOURCES, help="mottagarkälla: rtl, tcp, sim eller file (IQ-fil, se --spela)")
     p.add_argument("--simulator", action="store_true", help="samma som --kalla sim")
     p.add_argument("--tcp", metavar="VÄRD:PORT", help="anslut till en rtl_tcp-server")
     p.add_argument("--frekvens", dest="freq", metavar="FREKV", help="startfrekvens, t.ex. 145.5 eller 7074k")
     p.add_argument("--mod", dest="mode", type=str.upper, choices=MODES, help="modulering")
     p.add_argument("--start", action="store_true", help="börja ta emot direkt")
+    p.add_argument("--spela", metavar="FIL", help="spela upp en IQ-fil (SigMF, WAV, .cu8, .cf32 …) som källa")
+    p.add_argument("--takt", type=float, metavar="S/s", help="samplingstakt för rå IQ-fil (med --spela)")
+    p.add_argument("--mittfrekvens", metavar="FREKV", help="mittfrekvens för rå IQ-fil (med --spela)")
     p.add_argument("--webb", dest="web", nargs="?", type=int, const=0, metavar="PORT",
                    help="starta webbgränssnittet (standardport 8073)")
     p.add_argument("--squelch", type=float, metavar="DB", help="squelchnivå i dB, t.ex. -8")

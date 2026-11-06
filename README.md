@@ -70,7 +70,9 @@ Bara meddelanden med korrekt kontrollsumma (CRC) visas. Positioner kan öppnas p
 ![Flygradar](docs/bilder/flygradar.png)
 
 **Övrigt**
-- Ljudinspelning (WAV), automatisk inspelning när squelch öppnar, och IQ-inspelning (.cu8).
+- Ljudinspelning (WAV) och automatisk inspelning när squelch öppnar.
+- IQ-inspelning av hela bandet (1,5 MHz) som SigMF (cu8/cf32) eller WAV (SDR++/SDR#-format). Omstämningar under inspelningen sparas.
+- Uppspelning av IQ-filer som mottagarkälla: SigMF, WAV, rtl_sdr `.cu8`, `.cs8`, `.cs16`, `.cf32`/`.cfile` och gqrx. Paus, spolning, 1–8× eller maxfart, slinga. Andra samplingstakter räknas om automatiskt. Allt fungerar på filen: avkodare, signalanalys, skanner och signallogg.
 - Webbgränssnitt (KiwiSDR-liknande): vattenfall, inställning och ljud i webbläsaren på `http://127.0.0.1:8073/`.
 - Loggfil och knappen "Kopiera felrapport" (eller `radiospanaren --rapport`), som ger en rapport att klistra in när du ber om hjälp.
 - Fullständig kommandorad för start, skanning, avkodning, självtest och felsökning.

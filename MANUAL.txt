@@ -1,5 +1,5 @@
 ══════════════════════════════════════════════════════════════════════
-  RADIOSPANAREN – MANUAL                                   version 2.3.0
+  RADIOSPANAREN – MANUAL                                   version 2.4.0
   SDR-mottagare, radioskanner och signallogg för Fedora
 ══════════════════════════════════════════════════════════════════════
 
@@ -22,7 +22,12 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   radiospanaren                     Starta med senaste inställningar
   radiospanaren --start             Starta och börja ta emot direkt
   radiospanaren --simulator         Använd simulatorn (testa utan SDR)
-  radiospanaren --kalla rtl         Välj källa: rtl, tcp eller sim
+  radiospanaren --kalla rtl         Välj källa: rtl, tcp, sim eller file (IQ-fil)
+  radiospanaren --spela FIL         Spela upp en IQ-fil som mottagare (SigMF, WAV,
+                                    .cu8, .cs8, .cs16, .cf32/.cfile)
+  --takt 2048000 --mittfrekvens 145.5
+                                    Samplingstakt/mittfrekvens för råa filer som
+                                    saknar dem (annars tas de ur filnamnet)
   radiospanaren --tcp 192.168.1.20:1234
                                     Anslut till en rtl_tcp-server
   radiospanaren --frekvens 145.5    Startfrekvens (MHz om ingen enhet)
@@ -61,6 +66,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
     radiospanaren --frekvens 144.8 --mod NFM --aprs --start
     radiospanaren --direktsampling q --frekvens 14.074 --mod USB --start
     radiospanaren --simulator --frekvens 131.725 --mod AM --acars --start   (test-ACARS)
+    radiospanaren --spela ~/Musik/Radiospanaren/inspelning.sigmf-meta --start
 
  Felsökning och hjälp
  ────────────────────
@@ -329,9 +335,33 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
  Inspelning
   "● Spela in" i titelraden spelar in ljudet som WAV.
   "Spela in automatiskt vid signal" sparar en fil varje gång squelch öppnar.
-  IQ-inspelning sparar råa samples (.cu8, 1 536 000 S/s, ca 3 MB/s) som
-  kan öppnas i andra SDR-program.
+  IQ-inspelning sparar hela det mottagna bandet (1 536 000 S/s, 1,5 MHz brett)
+  så att du kan spela upp det senare, lyssna på andra frekvenser i det och
+  analysera/avkoda i efterhand. Välj format under "IQ-format":
+    • SigMF cu8 (standard, ca 3 MB/s) – .sigmf-data + .sigmf-meta med
+      frekvens, takt och tid. Om du stämmer om under inspelningen sparas
+      varje ny mittfrekvens, så uppspelningen följer med.
+    • SigMF cf32 (ca 12 MB/s) – flyttal, för vidare analys i t.ex. GNU Radio,
+      inspectrum eller Python.
+    • WAV 16 bitar (ca 6 MB/s) – samma format som SDR++ och SDR#
+      (baseband_<frekvens>Hz_<tid>_<datum>.wav). Vid omstämning börjar en
+      ny fil.
   Filerna hamnar i ~/Musik/Radiospanaren (eller ~/Radiospanaren).
+
+ Uppspelning av IQ-fil
+  Välj Källa → "IQ-fil (uppspelning)", tryck "Välj …" och sedan ▶ Starta.
+  Filen fungerar då som mottagare: vattenfall, demodulering, squelch,
+  skanner, signallogg, avkodare och Signalanalys fungerar som vanligt inom
+  filens band. Mittfrekvensen styrs av filen.
+  Formaten som kan läsas: SigMF, WAV (SDR++, SDR#, 8/16/32 bitar), rtl_sdr
+  (.cu8/.raw/.bin), .cs8, .cs16, .cf32/.cfile och gqrx (*_fc.raw).
+  Råa filer innehåller inte takt eller frekvens. De läses ur filnamnet om de
+  står där (t.ex. _145.500MHz_2048000sps), annars frågar programmet.
+  Andra samplingstakter (t.ex. 2,4 MS/s eller en smal 48 kHz-fil) räknas om
+  automatiskt. Utanför en smal fils band läggs brus på filens egen nivå.
+  Under uppspelningen: ⏸ paus, dra i reglaget för att spola, Hastighet
+  1×–8× eller "Så fort det går" (bra för att leta efter paket), och
+  "Spela i slinga".
 
  Webbgränssnitt
   Aktivera i sidopanelen eller med --webb. Öppna sedan
