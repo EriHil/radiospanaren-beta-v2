@@ -773,6 +773,51 @@ def _ramperiod(z, fs, lo_ms=5.0, hi_ms=250.0, min_r=0.12, min_kvot=6.0):
     return (j + frac) / fs * 1000.0, topp
 
 
+# Lågbaudiga MFSK-lägen med tonavstånd = symboltakt: (namn, symboltakt, antal toner, familj)
+LAGBAUD_MFSK = [("FT8", 6.25, 8, "MFSK"), ("FT4", 20.833, 4, "FSK4")]
+
+
+def lagbaud_mfsk(z, fs, f0=0.0):
+    """Känner igen FT8/FT4 kring f0 Hz i basbandet z (helst ≥ 3 s).
+    Fönster = en symbol: rätt läge ger EN ton per fönster, tonbyte ungefär varje symbol och högst M
+    intilliggande toner. Returnerar dict(namn, baud, toner, renhet, ...) eller None."""
+    z = np.asarray(z, np.complex64)
+    bast = None
+    for namn, b, M, fam in LAGBAUD_MFSK:
+        N = int(round(fs / b))
+        if N < 8 or len(z) < 12 * N:
+            continue
+        hop = max(1, N // 4)
+        nfr = (len(z) - N) // hop
+        idx = np.arange(N)[None, :] + hop * np.arange(nfr)[:, None]
+        X = np.fft.fft(z[idx] * np.hanning(N).astype(np.float32), axis=1)
+        fr = np.fft.fftfreq(N, 1 / fs)
+        sel = np.abs(fr - f0) <= (M + 1.5) * b
+        if sel.sum() < M:
+            continue
+        E = np.abs(X[:, sel]) ** 2
+        tot = E.sum(axis=1) + 1e-30
+        aktiv = tot > 4 * np.median(tot) if np.median(tot) > 0 else tot > 0
+        if aktiv.sum() < 12:
+            aktiv = tot >= np.percentile(tot, 60)
+        if aktiv.sum() < 12:
+            continue
+        pk = E.argmax(axis=1)
+        renhet = float(np.median((E.max(axis=1) / tot)[aktiv]))
+        # tonbyte ungefär var 4:e hopp (= en symbol)
+        p_ = pk[aktiv]
+        byten = np.flatnonzero(np.diff(p_) != 0)
+        langd = float(np.median(np.diff(byten))) if len(byten) >= 4 else 99.0
+        anv = np.bincount(p_, minlength=E.shape[1]) / len(p_)
+        toner = int(np.count_nonzero(anv >= 0.03))
+        spann = int(np.ptp(np.flatnonzero(anv >= 0.03)) + 1) if toner else 0
+        ok = renhet >= 0.45 and 2.0 <= langd <= 7.0 and 3 <= toner <= M + 1 and spann <= M + 2
+        if ok and (bast is None or renhet > bast["renhet"]):
+            bast = dict(namn=namn, baud=b, toner=M, fam=fam, renhet=renhet, symbol_hopp=langd,
+                        toner_sedda=toner)
+    return bast
+
+
 def _fsk_baud(fi, fs, tones):
     """Symboltakt för FSK ur runlängderna mellan tonbyten (robust mot teckenstruktur som RYRY)."""
     tones = np.sort(np.asarray(tones))
@@ -1186,6 +1231,35 @@ class Analyzer:
     FAM_BYT = 3
     FAM_BRUS = 2
 
+    def _lagbaud_steg(self, feat, tgt):
+        """FT8/FT4: kräver flera sekunder (6,25 resp. 20,8 symboler/s) – egen detektor på upp till 4 s."""
+        if not hasattr(self, "_lagbaud"):
+            self._lagbaud = deque(maxlen=6)
+        r, provad = None, False
+        # även vid BRUS/BÄRVÅG: FT4/FT8 sänder i omgångar, och i en smal kanal ser en ton ut som en bärvåg
+        if feat.get("fam") != "AM" and feat.get("occ_bw", 0) < 8000:
+            snap = self.tap.snapshot(4.0)
+            if snap is not None and len(snap[0]) >= snap[1] * 2.5:
+                provad = True
+                r = lagbaud_mfsk(snap[0], snap[1], getattr(self, "klick", tgt) - tgt)
+        if provad:                             # för lite data (kanalen nyss bytt): historiken står kvar
+            self._lagbaud.append(r["namn"] if r else None)
+        namn = [x for x in self._lagbaud if x]
+        if namn and (r or len(namn) >= 2):
+            flest = max(set(namn), key=namn.count)     # FT8 eller FT4 efter majoritet
+            best = next(dict(namn=x[0], baud=x[1], toner=x[2], fam=x[3]) for x in LAGBAUD_MFSK if x[0] == flest)
+            feat.update(fam=best["fam"], klass=FAM_NAMN[best["fam"]] + f" ({best['namn']})",
+                        baud=best["baud"], shift=best["baud"], toner=best["toner"], lagbaud=best["namn"])
+            feat["occ_bw"] = best["baud"] * best["toner"]
+            feat["f_mid"] = getattr(self, "klick", tgt) - tgt
+            # sedd minst två gånger: smalna av kanalen kring klicket (bättre SNR, rätt bredd i panelen)
+            ft = self.fit
+            if len(namn) >= 2 and ft is not None and ft.get("state") == "klar" and not ft.get("lagbaud"):
+                bredd = best["baud"] * best["toner"]
+                ft.update(lagbaud=best["namn"], width=bredd)
+                self.tap.set_target(getattr(self, "klick", tgt), max(300.0, bredd * 3))
+                log.info("Signalanalys: %s – kanalen smalnas till %.0f Hz", best["namn"], max(300.0, bredd * 3))
+
     def _stabil_ram(self, feat):
         """En ramperiod som setts minst 3 av de 8 senaste stegen gäller även i steg där den inte syns
         (svag signal, grannsignaler) – annars hoppar förslaget mellan t.ex. STANAG 4285 och något annat."""
@@ -1234,6 +1308,8 @@ class Analyzer:
     def set_target(self, f, bw, auto=False):
         """auto=True: bw är bara en första gissning – analysen mäter själv signalens bredd."""
         self.fit = None
+        self.klick = float(f)                  # där användaren klickade (kanalens mitt kan flyttas)
+        self._lagbaud = deque(maxlen=6)
         if auto:
             cap = min(self.FIT_MAX_SURVEY, self.tap.sr * 0.9)
             survey = float(np.clip(max(bw * 3.0, self.FIT_MIN_SURVEY), 1000.0, cap))
@@ -1345,6 +1421,7 @@ class Analyzer:
         feat = analyze(z, fs, bw)
         self._stabil_familj(feat)
         self._stabil_ram(feat)
+        self._lagbaud_steg(feat, tgt)
         f_abs = tgt + feat.get("f_mid", 0.0)
         feat["f_abs"] = f_abs
         feat["target"] = tgt

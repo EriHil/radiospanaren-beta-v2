@@ -1,5 +1,9 @@
 # Ändringslogg
 
+## 2.9.2 (2026-11-06)
+
+- **FT8/FT4-detektor i signalanalysen.** Den tittar på upp till 4 s kring den punkt man klickade på, med ett fönster som är exakt en symbol långt (160 ms för FT8, 48 ms för FT4). FT8 och FT4 känns igen på att varje symbol ligger i en ton, att tonen byter ungefär varje symbol och att högst 8 respektive 4 intilliggande toner används. När läget har setts två gånger smalnas kanalen av till signalens egen bredd. Detektorn gav inga falska träffar på AM, CW, SSB, RTTY, STANAG eller RWM i facitklippen.
+
 ## 2.9.1 (2026-11-06)
 
 - **SSB-tal känns igen.** Talets övertoner gav ett regelbundet "tonraster" som tolkades som OFDM. Nu kräver OFDM och "digital linjär" jämn effekt, eftersom tal varierar med stavelserna.
