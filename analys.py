@@ -277,6 +277,143 @@ def _smooth(x, n):
     return uniform_filter1d(x, n, mode="nearest") if n > 1 else x
 
 
+def fit_bandwidth(z, fs, survey_bw, near_hz=300.0):
+    """Mäter hur långt signalen nära mitten sträcker sig ovanför brusgolvet.
+
+    Kanten bestäms mot brusgolvet, inte mot toppen: AM-sidband som ligger 30–40 dB under
+    bärvågen räknas med så länge de syns över bruset. Små luckor (t.ex. mellan FSK-toner)
+    överbryggas. Returnerar (mitt_hz, bredd_hz, når_kanten) eller None om ingen signal syns.
+    når_kanten = signalen fortsätter utanför överblicken (den var för smal)."""
+    z = np.asarray(z, np.complex64)
+    N = len(z)
+    if N < 2048:
+        return None
+    grov = int(np.clip(_pow2(fs / max(survey_bw / 400.0, 1.0)), 256, 16384))
+    while grov > 256 and N // grov < 8:          # minst 8 medelvärden – annars är brusgolvet för brusigt
+        grov //= 2
+    r = _fit_res(z, fs, survey_bw, near_hz, grov)
+    fin = grov
+    while fin * 2 <= 16384 and N // (fin * 2) >= 8:
+        fin *= 2
+    # smal signal (t.ex. en nycklad bärvåg) syns inte i grov upplösning: försök igen finare
+    if fin > grov and (r is None or r[1] < 12 * fs / grov):
+        r2 = _fit_res(z, fs, survey_bw, near_hz, fin)
+        if r2 is not None:
+            r = r2
+    return r
+
+
+def _fit_res(z, fs, survey_bw, near_hz, nfft):
+    N = len(z)
+    f, P = _welch(z, fs, nfft)
+    sel = np.abs(f) <= survey_bw / 2
+    f, P = f[sel], P[sel]
+    if len(f) < 16:
+        return None
+    res = fs / nfft
+    Pd = 10 * np.log10(P + 1e-30)
+    # Brusgolvet ur de lägsta 10 %: håller så länge minst en tiondel av överblicken är brus.
+    # Spridningen i dB för ett medelvärde av m periodogram är ungefär 5,6/√m (teori, inte uppmätt –
+    # den uppmätta spridningen blir för stor när signalen täcker större delen av överblicken).
+    m = max(1, N // nfft)
+    sigma = 5.57 / math.sqrt(m)
+    floor = float(np.percentile(Pd, 10)) + 1.28 * sigma      # ≈ brusets median
+    thr = floor + max(3.0, 4.0 * sigma)
+    c = len(f) // 2
+    r = max(1, int(near_hz / res))
+    k0 = max(0, c - r) + int(np.argmax(Pd[max(0, c - r):c + r + 1]))
+    if Pd[k0] < thr + 3:
+        return None
+    above = Pd > thr
+    gap = max(2, int(round(max(250.0, survey_bw * 0.02) / res)))   # t.ex. hålet kring en AM-bärvåg
+    # Tydlig smal bärvåg vid k0 (AM): talets hål i sidbanden kan vara flera hundra Hz, så luckorna får
+    # växa med bredden. Annars fast lucka – ett brusgap mellan två signaler ska inte överbryggas.
+    nb = max(1, int(round(2000.0 / res)))
+    omg = P[max(0, k0 - nb):k0 + nb + 1]
+    topp_bredd = np.count_nonzero(Pd[max(0, k0 - nb):k0 + nb + 1] > Pd[k0] - 6) * res
+    # bärvågens andel av effekten inom ±2 kHz (oberoende av upplösningen): AM ≈ 0,8–0,95
+    andel = float(P[max(0, k0 - 2):k0 + 3].sum()) / (float(omg.sum()) + 1e-30)
+    barvag = topp_bredd < 150 and andel >= 0.3
+
+    def edge(step):
+        k, last, miss = k0, k0, 0
+        while 0 < k < len(f) - 1:
+            k += step
+            if above[k]:
+                last, miss = k, 0
+            else:
+                miss += 1
+                if barvag:
+                    tillat = max(gap, int(0.2 * abs(last - k0)))
+                else:
+                    # utan bärvåg: luckan växer med signalen men högst 250 Hz – smala signaler tätt
+                    # intill varandra (FT8, CW) ska inte slås ihop
+                    tillat = min(gap, max(2, int(round(60.0 / res)), int(0.15 * abs(last - k0))))
+                if miss > tillat:
+                    break
+        return last
+
+    a, b = edge(-1), edge(1)
+    # för smal överblick: signalen når kanten eller fyller nästan hela fönstret
+    kant = a <= gap or b >= len(f) - 1 - gap or (b - a + 1) > 0.75 * len(f)
+    dl, dr = float(f[k0] - f[a]), float(f[b] - f[k0])
+    if barvag and min(dl, dr) < 0.3 * max(dl, dr, 1e-9):
+        barvag = False      # tonen ligger i kanten av signalen (FSK-ton), inte mitt i (AM-bärvåg)
+    if barvag:
+        # en AM-bärvåg är ensam: FSK har två (eller fler) nästan lika starka toner
+        w = max(2, int(round(topp_bredd / res)))
+        rest = np.r_[Pd[a:max(a, k0 - w)], Pd[k0 + w + 1:b + 1]]
+        if len(rest) and float(rest.max()) > Pd[k0] - 8:
+            barvag = False
+    if barvag:
+        # AM: bärvågen är mitten och sidbanden är lika breda – den bredare sidan räknas (den smalare
+        # har ofta ett hål i talet), men inte bredare än vad som ryms i överblicken
+        half = max(float(f[k0] - f[a]), float(f[b] - f[k0])) + res / 2
+        return float(f[k0]), 2 * half, kant
+    a, b = _split_valleys(Pd, res, a, b, k0, thr)
+    lo, hi = float(f[a]) - res / 2, float(f[b]) + res / 2
+    return (lo + hi) / 2, hi - lo, kant
+
+
+def _split_valleys(Pd, res, a, b, k0, thr, djup=10.0, sida_hz=600.0):
+    """Skiljer signaler som ligger tätt intill varandra (t.ex. modem med 3 kHz mellanrum):
+    delar vid svackor som är minst `djup` dB under nivån på båda sidor, när det finns minst
+    `sida_hz` bred signal på var sida. Behåller delen med k0. Görs inte om det finns en tydlig
+    smal bärvåg (AM): talets hål i sidbanden ska inte klyva sändningen."""
+    if b - a < 8:
+        return a, b
+    seg = Pd[a:b + 1]
+    sm = _smooth(seg, max(3, int(round(80.0 / res))))
+    plat = float(np.percentile(sm, 75))
+    topp = int(np.argmax(seg))
+    smal = np.count_nonzero(seg > seg[topp] - 6) * res < 150
+    if smal and seg[topp] > plat + 10:
+        return a, b                                  # bärvåg + sidband: en signal
+    W = max(2, int(round(sida_hz / res)))
+    snitt = []
+    for i in range(1, len(sm) - 1):
+        if not (sm[i] <= sm[i - 1] and sm[i] <= sm[i + 1]):
+            continue
+        v, h = sm[max(0, i - W):i], sm[i + 1:i + 1 + W]
+        if len(v) < W // 2 or len(h) < W // 2:
+            continue
+        nv = min(float(np.percentile(v, 75)), float(np.percentile(h, 75)))
+        if nv - sm[i] >= djup and np.count_nonzero(v > sm[i] + 6) * res >= sida_hz * 0.6 \
+                and np.count_nonzero(h > sm[i] + 6) * res >= sida_hz * 0.6:
+            if not snitt or i - snitt[-1] > W // 2:
+                snitt.append(i)
+    if not snitt:
+        return a, b
+    kk = k0 - a
+    lo_i = max([i for i in snitt if i < kk], default=-1) + 1
+    hi_i = min([i for i in snitt if i > kk], default=len(seg)) - 1
+    # krymp till det som ligger över tröskeln inom delen
+    inne = np.flatnonzero(seg[lo_i:hi_i + 1] > thr)
+    if len(inne):
+        lo_i, hi_i = lo_i + int(inne[0]), lo_i + int(inne[-1])
+    return a + lo_i, a + hi_i
+
+
 def analyze(z, fs, bw):
     """Mät och klassa signalen i z (komplext basband, mitt = analysens målfrekvens)."""
     t0 = time.perf_counter()
@@ -397,7 +534,12 @@ def analyze(z, fs, bw):
         out["baud"] = None
         out["baud_styrka"] = bstr
 
-    # ── 6. Linjer i z^n: bärvåg och PSK-ordning ──
+    # ── 5b. Ramperiod för modem med en bärvåg ──
+    # Tydlig symboltaktslinje i envelopen + varierande envelop = linjärt modem med en bärvåg (PSK/QAM med
+    # pulsformning). Modemens ramar (synk/testsymboler som upprepas) syns som toppar i autokorrelationen,
+    # t.ex. STANAG 4285: 256 symboler = 106,7 ms vid 2400 Bd. Görs bara här: toner, FSK och bärvågor ger
+    # annars skenbara perioder.
+    out["enkelbarvag"] = False
     zo = zf[on] if onoff else zf
     zo = zo / (np.sqrt(np.mean(np.abs(zo) ** 2)) + 1e-12)
     nf = _pow2(len(zo) * 2)
@@ -406,6 +548,39 @@ def analyze(z, fs, bw):
         lines[n] = _power_line(zo, fs, n, n * (3 * res + 15), nf)
     out["linjer"] = {n: round(s, 1) for n, (_, s) in lines.items()}
     car = lines[1][1]
+    # Bärvågens andel av effekten: AM har normalt > 50 % i bärvågen, en OFDM-pilot några procent.
+    # Söks i mittersta delen av signalen (inte bara exakt i kanalens mitt – osymmetriska sidband och
+    # grannsignaler flyttar mitten).
+    car_frac, car_f = 0.0, None
+    if sel_ok := (Pin.size > 8):
+        nara = np.abs(fin - mid) <= max(0.2 * occ, 4 * res)
+        if nara.any():
+            kc = int(np.flatnonzero(nara)[np.argmax(Pin[nara])])
+            car_p = float(Pin[max(0, kc - 2):kc + 3].sum())
+            tot = float(Pin[(fin >= lo - res) & (fin <= hi + res)].sum()) + 1e-30
+            car_frac, car_f = car_p / tot, float(fin[kc])
+    out["barvag_andel"] = car_frac
+    # Symboltakten för pulsformad PSK/QAM ligger nära bandbredden (bw ≈ baud·(1+β), dvs baud ≈ 0,7–0,95·bw),
+    # så den söks just där. Linjer kring 0,5·bw kommer från ljud/toner (tal, FSK, flertonsmodem) – uppmätt
+    # med analystest på riktiga och syntetiska klipp.
+    single, ob = False, None
+    # Gränserna (styrka ≥ 19 dB, 0,75–1,05·bw, bw ≥ 600 Hz) skiljer riktiga modem (22–28 dB, 0,86–0,95) från
+    # tal, RTTY och flertonsmodem (14–18 dB, 0,68–1,0) i analystest-klippen.
+    # ojusterad cv: brusjusteringen (cv_c) blir för stor när SNR underskattas av grannsignaler i kanalen;
+    # kravet på en stark symboltaktslinje skyddar mot rent brus
+    if car < 14 and cv > 0.15 and occ >= 600:
+        env2 = (a * a)[on] if onoff else a * a
+        fb, sb = _line(env2.astype(np.float64), fs, 0.75 * occ, min(1.05 * occ, fs / 2.2))
+        out["enkel_linje"] = (fb, sb)          # diagnostik (analystest)
+        if fb and sb >= 19:
+            single, ob = True, fb
+            out["baud"], out["baud_styrka"] = float(fb), sb
+    out["enkelbarvag"] = single
+    if single:
+        rm = _ramperiod(zf, fs)
+        if rm:
+            out["ram_ms"], out["ram_styrka"] = rm
+            out["ram_sym"] = rm[0] * ob / 1000.0
 
     # ── 7. Toner i spektrum (parallellmodem/MFSK) ──
     sel = (fin >= lo - res) & (fin <= hi + res)
@@ -458,8 +633,12 @@ def analyze(z, fs, bw):
         fam = "OOK"
     elif narrow and cv_c < 0.2 and not onoff:
         fam = "BÄRVÅG"
+    elif car_frac >= 0.4 and cv_c > 0.06 and not narrow:
+        fam = "AM"                 # bärvågen bär större delen av effekten (OFDM-piloter: några procent)
     elif psk:
         fam = psk
+    elif single:
+        fam = "LIN"                # en bärvåg med symboltakt – inte OFDM/AM/FM även om spektrumet rippar
     elif nlev >= 2 and cv_c < 0.35 and shift and (nlev > 2 or trans < 0.18 or
                                                   (fsk_baud and abs(shift / fsk_baud - 0.5) < 0.12)):
         if fsk_baud:
@@ -514,6 +693,41 @@ def analyze(z, fs, bw):
         out["kurva"] = sm[-400 * k::k] / p95
     out["ms"] = (time.perf_counter() - t0) * 1000
     return out
+
+
+def _ramperiod(z, fs, lo_ms=5.0, hi_ms=250.0, min_r=0.12, min_kvot=6.0):
+    """Starkaste periodicitet (ram) i komplexa basbandet z. Returnerar (period_ms, styrka) eller None.
+    Styrka = normerad autokorrelation (0–1) vid perioden; kräver att den sticker ut mot medianen."""
+    z = np.asarray(z, np.complex128)
+    n = len(z)
+    lo, hi = int(lo_ms / 1000 * fs), min(int(hi_ms / 1000 * fs), n // 3)
+    if hi <= lo + 4:
+        return None
+    nf = 1 << int(math.ceil(math.log2(2 * n)))
+    Z = np.fft.fft(z - z.mean(), nf)
+    r = np.fft.ifft(np.abs(Z) ** 2)[:hi + 2]
+    k = np.arange(len(r))
+    r = np.abs(r) / (n - k) / (abs(r[0]) / n + 1e-30)      # opartisk och normerad
+    seg = r[lo:hi + 1]
+    i = int(np.argmax(seg))
+    topp, med = float(seg[i]), float(np.median(seg)) + 1e-9
+    if topp < min_r or topp < min_kvot * med:
+        return None
+    j = lo + i
+    # grundperioden: en halv/tredjedels period som är nästan lika stark är den verkliga ramen
+    for dv in (3, 2):
+        jj = int(round(j / dv))
+        if jj >= lo:
+            w = r[max(lo, jj - 2):jj + 3]
+            if len(w) and float(w.max()) >= 0.8 * topp:
+                j = max(lo, jj - 2) + int(np.argmax(w))
+                break
+    frac = 0.0
+    if 0 < j < len(r) - 1:
+        a_, b_, c_ = r[j - 1], r[j], r[j + 1]
+        d_ = a_ - 2 * b_ + c_
+        frac = float(np.clip(0.5 * (a_ - c_) / d_, -0.5, 0.5)) if d_ != 0 else 0.0
+    return (j + frac) / fs * 1000.0, topp
 
 
 def _fsk_baud(fi, fs, tones):
@@ -674,9 +888,9 @@ class RttyAvkodare(Avkodare):
         return feat.get("fam") == "FSK2" and b and 40 <= b <= 115 and s and 60 <= s <= 1100
 
     def feed(self, z, fs, feat):
-        if len(z) == 0:
-            return ""
-        baud = feat["baud"]
+        baud = feat.get("baud")
+        if len(z) == 0 or not baud or feat.get("fi_peaks") is None:
+            return ""                    # mätningen saknar symboltakt/toner (t.ex. överskriven av en annan avkodare)
         for sb in self.STD:
             if abs(baud - sb) / sb < 0.05:
                 baud = sb
@@ -921,11 +1135,29 @@ class Analyzer:
         # Stabil signalfamilj: rå klassning varierar mellan mätningar (t.ex. FSK2 ↔ MFSK vid svag signal).
         # Ny familj visas först när den setts FAM_BYT av de senaste FAM_FONSTER gångerna, brus efter FAM_BRUS.
         self._fam_hist = deque(maxlen=self.FAM_FONSTER)
+        self._ram_hist = deque(maxlen=8)       # ramperioder från de senaste stegen (None = ingen)
+        self.fit = None                        # automatisk bandbredd, se set_target
         self._stable_fam = None
 
     FAM_FONSTER = 5
     FAM_BYT = 3
     FAM_BRUS = 2
+
+    def _stabil_ram(self, feat):
+        """En ramperiod som setts minst 3 av de 8 senaste stegen gäller även i steg där den inte syns
+        (svag signal, grannsignaler) – annars hoppar förslaget mellan t.ex. STANAG 4285 och något annat."""
+        rm = feat.get("ram_ms")
+        self._ram_hist.append(rm)
+        vals = [x for x in self._ram_hist if x]
+        if not vals:
+            return feat
+        ref = float(np.median(vals))
+        lika = [x for x in vals if abs(x - ref) / ref < 0.015]
+        if len(lika) >= 3 and feat.get("fam") in ("LIN", "PSK8", "QPSK", "BPSK"):
+            feat["ram_ms"] = float(np.median(lika))
+            if not rm:
+                feat["ram_minne"] = True
+        return feat
 
     def _stabil_familj(self, feat):
         """Byter feat["fam"]/["klass"] till den stabila familjen (hysteres mot hopp mellan mätningar)."""
@@ -951,11 +1183,52 @@ class Analyzer:
     def stop(self):
         self._stop.set()
 
-    def set_target(self, f, bw):
+    # Automatisk bandbredd: först en bred överblick, sedan smalnas kanalen av till signalens bredd.
+    FIT_MIN_SURVEY = 10000.0
+    FIT_MAX_SURVEY = 250e3
+    FIT_MAX_TRIES = 3
+
+    def set_target(self, f, bw, auto=False):
+        """auto=True: bw är bara en första gissning – analysen mäter själv signalens bredd."""
+        self.fit = None
+        if auto:
+            cap = min(self.FIT_MAX_SURVEY, self.tap.sr * 0.9)
+            survey = float(np.clip(max(bw * 3.0, self.FIT_MIN_SURVEY), 1000.0, cap))
+            self.fit = {"state": "survey", "guess": float(bw), "survey": survey, "tries": 0,
+                        "cap": cap, "result": None}
+            bw = survey
         self.tap.set_target(f, bw)
         self.result = None
         self.result_id += 1
         self._reset_lock()
+
+    def _fit_step(self, z, fs, tgt):
+        """Ett steg i bandbreddsmätningen. Returnerar True medan mätningen pågår."""
+        ft = self.fit
+        if ft is None or ft["state"] != "survey":
+            return False
+        snap = self.tap.snapshot(2.0)            # 2 s: stadigare brusgolv och sidband (tal varierar)
+        if snap is None or len(snap[0]) < fs * 1.8:
+            return True
+        z = snap[0]
+        ft["tries"] += 1
+        r = fit_bandwidth(z, fs, ft["survey"], near_hz=max(200.0, ft["guess"] * 0.5))
+        if r is not None and r[2] and ft["survey"] < ft["cap"] and ft["tries"] < self.FIT_MAX_TRIES:
+            ft["survey"] = min(ft["cap"], ft["survey"] * 3.0)      # signalen är bredare än överblicken
+            self.tap.set_target(tgt, ft["survey"])
+            log.info("Signalanalys: bredare överblick %.0f Hz", ft["survey"])
+            return True
+        if r is None:
+            new_f, new_bw = tgt, float(np.clip(ft["guess"] * 1.35, 400.0, ft["cap"]))
+            log.info("Signalanalys: ingen tydlig signal i överblicken – %.0f Hz", new_bw)
+        else:
+            mid, width, _k = r
+            new_f = tgt + mid
+            new_bw = float(np.clip(max(width * 1.25, width + 150.0), 300.0, ft["cap"]))
+            log.info("Signalanalys: uppmätt bandbredd %.0f Hz (kanal %.0f Hz, mitt %+.0f Hz)", width, new_bw, mid)
+        ft.update(state="klar", result=r, width=(r[1] if r else None))
+        self.tap.set_target(new_f, new_bw)
+        return True
 
     def _reset_lock(self):
         self.signal_lock = None
@@ -963,6 +1236,7 @@ class Analyzer:
         self._lock_top_n = 0
         self._fam_hist.clear()
         self._stable_fam = None
+        self._ram_hist.clear()
 
     def _lock_candidate(self, feat, ks, now):
         """Lås visningen till en stabil signaltyp i stället för att listan hoppar mellan likvärdiga förslag."""
@@ -1010,6 +1284,8 @@ class Analyzer:
         z, fs, tgt, bw, gen, total = snap
         if total == self._last_total or len(z) < fs * 0.25:
             return None
+        if self._fit_step(z, fs, tgt):
+            return None
         self._last_total = total
         now = time.monotonic() if now is None else now
         if gen != self._gen:
@@ -1022,6 +1298,7 @@ class Analyzer:
                 dd._ptr = None
         feat = analyze(z, fs, bw)
         self._stabil_familj(feat)
+        self._stabil_ram(feat)
         f_abs = tgt + feat.get("f_mid", 0.0)
         feat["f_abs"] = f_abs
         feat["target"] = tgt

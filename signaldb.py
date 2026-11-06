@@ -33,7 +33,9 @@ VHF_UHF = [(30.0, 1000.0)]
 
 SIGNALER = [
     # ── Militära HF-modem (NATO/USA) ──────────────────────────────────
-    dict(namn="STANAG 4285", kat="militär", mod=["PSK8", "LIN"], baud=2400, shift=None, toner=None, bw=3000,
+    # ram_ms: verifierad mot riktiga sändningar (6429,3 och 6778,5 kHz, 2026-11-06): 256 symboler à 2400 Bd
+    dict(namn="STANAG 4285", kat="militär", mod=["PSK8", "LIN", "QPSK", "BPSK"], baud=2400, ram_ms=106.667,
+         shift=None, toner=None, bw=3000,
          ljud=1800, f=HF, info="NATO HF-modem, 8PSK 2400 Bd på 1800 Hz underbärvåg. Marinens sändningar och "
                                "dataöverföring. Ofta krypterat."),
     dict(namn="MIL-STD-188-110A/B (seriell)", kat="militär", mod=["PSK8", "LIN"], baud=2400, shift=None,
@@ -123,6 +125,12 @@ SIGNALER = [
          bw=12500, ljud=None, f=VHF_UHF, info="Analog FM-radio (PMR, jakt, amatör m.m.). Klartext."),
 
     # ── Övrigt ───────────────────────────────────────────────────────
+    dict(namn="FT8", kat="amatör", mod=["MFSK", "FSK4", "FSK2"], baud=6.25, shift=6.25, toner=8, bw=50,
+         ljud=None, f=[(1.8, 1.85), (3.57, 3.58), (5.35, 5.36), (7.074, 7.077), (10.136, 10.139),
+                       (14.074, 14.077), (18.1, 18.103), (21.074, 21.077), (24.915, 24.918), (28.074, 28.077),
+                       (50.313, 50.316), (144.174, 144.177)],
+         info="Amatörradio, 8-FSK 6,25 Bd med 6,25 Hz tonavstånd (ca 50 Hz brett), 15 s sändningsperioder. "
+              "Många signaler sida vid sida på standardfrekvenserna (USB 7,074 m.fl.)."),
     dict(namn="Morse (CW)", kat="amatör", mod=["OOK"], baud=None, shift=None, toner=None, bw=150, ljud=None,
          f=[], info="Telegrafi med på/av-nycklad bärvåg. Klartext – avkodas här."),
     dict(namn="Omodulerad bärvåg", kat="kommersiell", mod=["BÄRVÅG"], baud=None, shift=None, toner=None, bw=50,
@@ -188,6 +196,20 @@ def match(feat, freq_hz, db=None, audio_center=None, top=4):
                     s -= 3
         elif e.get("baud") and not b and fam in ("FM", "AM"):
             s -= 1.5              # digital signaltyp men ingen symboltakt hittad
+        rm = feat.get("ram_ms")
+        ram_bonus = 0.0
+        if e.get("ram_ms") and rm:
+            # ramperioden är ett fingeravtryck: väger tyngre än allt annat
+            smax += 6
+            r = _rel(rm, e["ram_ms"])
+            if r < 0.015:
+                s += 6
+                ram_bonus = 15.0       # utöver andelen: annars når poster med färre kriterier högre
+                why.append(f"ram {rm:.1f} ms")
+            elif r > 0.03:
+                s -= 3
+        elif rm and e.get("baud") and fam in e["mod"]:
+            ram_bonus = -10.0          # ram uppmätt men posten saknar känd ramperiod: svagare stöd
         sh = feat.get("shift")
         if e.get("shift") and sh and fam in ("FSK2", "FSK4", "MFSK", "MSK", "OFDM"):
             smax += 3
@@ -230,7 +252,7 @@ def match(feat, freq_hz, db=None, audio_center=None, top=4):
                 s += 2
             else:
                 s -= 2
-        score = max(0.0, min(100.0, 100.0 * s / smax))
+        score = max(0.0, min(100.0, 100.0 * s / smax + ram_bonus))
         if score >= 35:
             res.append((score, e, ", ".join(why)))
     res.sort(key=lambda r: -r[0])

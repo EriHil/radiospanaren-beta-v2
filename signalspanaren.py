@@ -29,7 +29,7 @@ import atexit
 
 APP_NAME = "Signalspanaren"
 APP_ID = "se.eh.Signalspanaren"
-VERSION = "2.8.1"
+VERSION = "2.9.0"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "signalspanaren")
@@ -4007,7 +4007,7 @@ def run_gui(args):
 
     class AnalysPanel(Gtk.Box):
         ROWS = [("klass", "Signaltyp"), ("freq", "Frekvens (mitt)"), ("avv", "Avvikelse från mål"),
-                ("snr", "SNR"), ("occ", "Upptagen bandbredd"), ("baud", "Symboltakt"),
+                ("snr", "SNR"), ("occ", "Upptagen bandbredd"), ("baud", "Symboltakt"), ("ram", "Ramperiod"),
                 ("shift", "Shift / tonavstånd"), ("toner", "Antal toner"), ("ljud", "Ljudfrekvens (USB/LSB)"),
                 ("dev", "Deviation"), ("am", "Modulationsgrad"), ("ctcss", "Subton (CTCSS)"),
                 ("skur", "Sändningsmönster"), ("env", "Envelopvariation"), ("trafik", "Trafik"),
@@ -4241,22 +4241,41 @@ def run_gui(args):
                 bw = float(np.clip(auto_bw * 1.35, 400, 250e3))
             return bw
 
-        def set_target(self, f, auto_bw):
+        def set_target(self, f, auto_bw, fit=True):
+            """fit=False: använd bredden som den är (t.ex. demodulatorns kanal i läget Följ inställd)."""
+            auto = fit and self.bw_dd.get_selected() == 0
             bw = self.chosen_bw(auto_bw)
             self.auto_bw = auto_bw
-            self.an.set_target(f, bw)
+            self.an.set_target(f, auto_bw if auto else bw, auto=auto)
+            self._title_tap = None
             self.fax_dec = None
             self.fax_btn.set_visible(False)
             self.last = None
             self._rid = -1
             self.mini.clear()
             self.mini.zoom = 1.0
-            self.title.set_markup(f"<b>Analys:</b> {fmt_mhz(f)} MHz  ·  {_fmt_hz(bw)}  "
-                                  f"<span alpha='60%'>{GLib.markup_escape_text(band_name(f) or '')}</span>")
-            self.title.set_tooltip_markup(self.title.get_label())
+            self._show_title()
             self._update_rows(None)
             self.diag.queue_draw()
             log.info("Signalanalys: %.6f MHz, bandbredd %.0f Hz", f / 1e6, bw)
+
+        def _show_title(self):
+            """Rubriken följer kanalen – den ändras när den automatiska bandbredden är uppmätt."""
+            tap, ft = self.an.tap, self.an.fit
+            key = (tap.target, tap.bw, ft["state"] if ft else None)
+            if key == getattr(self, "_title_tap", None) or tap.target is None:
+                return
+            self._title_tap = key
+            f = tap.target
+            if ft and ft["state"] == "survey":
+                bwtxt = "<span alpha='60%'>mäter bandbredd …</span>"
+            elif ft and ft.get("width"):
+                bwtxt = f"{_fmt_hz(ft['width'])} <span alpha='60%'>(uppmätt)</span>"
+            else:
+                bwtxt = _fmt_hz(tap.bw)
+            self.title.set_markup(f"<b>Analys:</b> {fmt_mhz(f)} MHz  ·  {bwtxt}  "
+                                  f"<span alpha='60%'>{GLib.markup_escape_text(band_name(f) or '')}</span>")
+            self.title.set_tooltip_markup(self.title.get_label())
 
         def retarget_offset(self, off):
             t = self.an.tap.target
@@ -4292,15 +4311,17 @@ def run_gui(args):
         def _on_follow(self, b):
             self.win.conf["analys_follow"] = b.get_active()
             if b.get_active():
+                self._follow_key = None
                 self.follow_tuned()
 
         def follow_tuned(self):
             e = self.win.engine
             lo, hi = e._chan_bounds(e.mode, e.bw, self.win.freq)
             f = (lo + hi) / 2
-            t = self.an.tap.target
-            if t is None or abs(t - f) > 1 or abs((self.an.tap.bw or 0) - self.chosen_bw(hi - lo)) > 1:
-                self.set_target(f, hi - lo)
+            key = (round(f), round(self.chosen_bw(hi - lo)))
+            if self.an.tap.target is None or key != getattr(self, "_follow_key", None):
+                self._follow_key = key
+                self.set_target(f, hi - lo, fit=False)
 
         def listen(self):
             r = self.last
@@ -4342,6 +4363,7 @@ def run_gui(args):
             gw = self.grid.get_width()
             if gw > 0:
                 self._layout_cells(2 if gw >= 620 else 1)
+            self._show_title()
             self._place_title()
             self._fit_cells()
             if self.follow.get_active():
@@ -4441,6 +4463,13 @@ def run_gui(args):
             self._set("ctcss", f"{r['ctcss']:.1f} Hz" if r.get("ctcss") else None)
             self._set("skur", f"skurar ({r.get('duty', 0) * 100:.0f} % på)" if r.get("skurar") else "kontinuerlig")
             self._set("env", f"{r.get('cv', 0):.2f}")
+            rm = r.get("ram_ms")
+            if rm:
+                ns = r.get("ram_sym") or 0
+                sym = f" = {round(ns)} symboler" if ns and abs(ns - round(ns)) < 0.02 * ns else ""
+                self._set("ram", f"{rm:.1f} ms{sym}")
+            else:
+                self._set("ram", None)
             self._set("trafik", self.traffic(r))
             vals = r.get("avk_varden") or []
             for i, key in enumerate(("avk1", "avk2", "avk3")):

@@ -276,6 +276,13 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  signalspanaren
   ny färgskala) eller "Klassisk". Tema: mörkt, ljust eller följ systemet.
   Egen CSS kan läggas i ~/.config/signalspanaren/style.css.
 
+ Mätverktyg för signalanalysen (för utveckling)
+  python3 analystest.py mat      kör analysen på facitklipp och syntetiska signaler och visar
+                                 hur ofta signaltyp, bandbredd och förslag blir rätt
+  python3 analystest.py samla    spelar in klippen i facit.json från KiwiSDR
+  python3 analystest.py spela-in --frekvens 7.1 --fam SSB --bredd 1800-3200 --namn "SSB 40 m"
+  Klippen sparas i ~/.local/share/signalspanaren/facit-klipp/.
+
  Skärmanpassning
   Programmet känner av upplösningen på skärmen det visas på:
   - Fönstret startar i en storlek som ryms på skärmen (maximerat på skärmar

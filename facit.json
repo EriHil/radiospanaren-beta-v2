@@ -1,0 +1,253 @@
+[
+ {
+  "namn": "AM-rundradio 7,265 MHz",
+  "frekvens": 7265000,
+  "fam": [
+   "AM"
+  ],
+  "bredd": [
+   5000,
+   10500
+  ],
+  "not": "41 m-bandet, hörd 2026-11-06"
+ },
+ {
+  "namn": "DWD RTTY 10,1008 MHz",
+  "frekvens": 10100800,
+  "fam": [
+   "FSK2"
+  ],
+  "bredd": [
+   450,
+   1100
+  ],
+  "kandidat": "RTTY 50 Bd / 450 Hz (väder)",
+  "not": "Deutscher Wetterdienst, Pinneberg, dygnet runt"
+ },
+ {
+  "namn": "DWD RTTY 7,646 MHz",
+  "frekvens": 7646000,
+  "fam": [
+   "FSK2"
+  ],
+  "bredd": [
+   450,
+   1100
+  ],
+  "kandidat": "RTTY 50 Bd / 450 Hz (väder)",
+  "not": "Deutscher Wetterdienst, Pinneberg"
+ },
+ {
+  "namn": "DWD väderfax 7,880 MHz",
+  "frekvens": 7880000,
+  "fam": [
+   "FM",
+   "FSK2"
+  ],
+  "bredd": [
+   600,
+   1500
+  ],
+  "kandidat": "Väderfax (HF-fax)",
+  "not": "Deutscher Wetterdienst, 120 varv/min, sänder kartor enligt schema"
+ },
+ {
+  "namn": "RWM tidssignal 9,996 MHz",
+  "frekvens": 9996000,
+  "fam": [
+   "OOK",
+   "BÄRVÅG"
+  ],
+  "bredd": [
+   5,
+   300
+  ],
+  "not": "Moskva, bärvåg med sekundpulser"
+ },
+ {
+  "namn": "STANAG 4285 6778,5 kHz USB",
+  "frekvens": 6779800,
+  "fam": [
+   "PSK8",
+   "QPSK",
+   "BPSK",
+   "LIN"
+  ],
+  "bredd": [
+   2400,
+   3400
+  ],
+  "not": "Användarens exempel 2026-11-06: 6778,5 kHz USB (mitt ca 6779,8 kHz). Ramperiod 106,6 ms = STANAG 4285. Grannmodem ±3 kHz.",
+  "kandidat": "STANAG 4285"
+ },
+ {
+  "namn": "STANAG 4285 6429,3 kHz USB",
+  "frekvens": 6430800,
+  "fam": [
+   "PSK8",
+   "QPSK",
+   "BPSK",
+   "LIN"
+  ],
+  "bredd": [
+   2400,
+   3400
+  ],
+  "kandidat": "STANAG 4285",
+  "not": "Användarens exempel 2026-11-06 (osäker på typ). Identifierat: 2399,9 Bd, ramperiod 106,6 ms = 256 symboler (STANAG 4285)."
+ },
+ {
+  "namn": "AM-rundradio 7,125 MHz",
+  "frekvens": 7125000,
+  "fam": [
+   "AM"
+  ],
+  "bredd": null,
+  "not": "Användaren 2026-11-06: AM-modulerat tal, svag/fädande bärvåg."
+ },
+ {
+  "namn": "AM-rundradio 7,265 MHz (2)",
+  "frekvens": 7265000,
+  "fam": [
+   "AM"
+  ],
+  "bredd": [
+   5000,
+   10500
+  ],
+  "not": "Andra inspelningen 2026-11-06, bärvåg -38 Hz, 51–60 dB."
+ },
+ {
+  "namn": "AM-rundradio 7,300 MHz",
+  "frekvens": 7300000,
+  "fam": [
+   "AM"
+  ],
+  "bredd": [
+   5000,
+   10500
+  ],
+  "not": "Användarens exempel 2026-11-06 (AM-rundradio, 41 m)."
+ },
+ {
+  "namn": "AM-rundradio 7,350 MHz",
+  "frekvens": 7350000,
+  "fam": [
+   "AM"
+  ],
+  "bredd": [
+   5000,
+   10500
+  ],
+  "not": "Användarens exempel 2026-11-06 (AM-rundradio, 41 m)."
+ },
+ {
+  "namn": "AM-rundradio 7,360 MHz",
+  "frekvens": 7360000,
+  "fam": [
+   "AM"
+  ],
+  "bredd": [
+   5000,
+   10500
+  ],
+  "not": "Användarens exempel 2026-11-06 (AM-rundradio, 41 m)."
+ },
+ {
+  "namn": "SSB-tal 7,106 MHz USB",
+  "frekvens": 7107500,
+  "fam": [
+   "SSB"
+  ],
+  "bredd": [
+   1800,
+   3200
+  ],
+  "not": "Användarens exempel 2026-11-06: tal i USB på 7,106 MHz (mitt ca 7,1075 MHz)."
+ },
+ {
+  "namn": "CW 7,083 MHz",
+  "frekvens": 7083000,
+  "fam": [
+   "OOK"
+  ],
+  "bredd": [
+   10,
+   300
+  ],
+  "not": "Användarens exempel 2026-11-06. Bärvåg -19 Hz, 18 dB, ca 120 på/av-byten på 20 s."
+ },
+ {
+  "namn": "FT8 7,074 MHz",
+  "frekvens": 7075169,
+  "fam": [
+   "MFSK"
+  ],
+  "bredd": [
+   30,
+   120
+  ],
+  "kandidat": "FT8",
+  "not": "Användarens exempel 2026-11-06. Klippet täcker FT8-bandet; målet är en stark signal 1169 Hz över 7,074 (USB)."
+ },
+ {
+  "namn": "CW 7,02863 MHz",
+  "frekvens": 7028653,
+  "fam": [
+   "OOK"
+  ],
+  "bredd": [
+   10.0,
+   300.0
+  ],
+  "not": "Användarens exempel 2026-11-06. Bärvåg +23 Hz från 7.02863 MHz."
+ },
+ {
+  "namn": "CW 7,030 MHz",
+  "frekvens": 7029962,
+  "fam": [
+   "OOK"
+  ],
+  "bredd": [
+   10.0,
+   300.0
+  ],
+  "not": "Användarens exempel 2026-11-06. Bärvåg -38 Hz från 7.03000 MHz."
+ },
+ {
+  "namn": "CW 7,037 MHz",
+  "frekvens": 7036815,
+  "fam": [
+   "OOK"
+  ],
+  "bredd": [
+   10.0,
+   300.0
+  ],
+  "not": "Användarens exempel 2026-11-06. Bärvåg -185 Hz från 7.03700 MHz."
+ },
+ {
+  "namn": "CW 7,0222 MHz",
+  "frekvens": 7021963,
+  "fam": [
+   "OOK"
+  ],
+  "bredd": [
+   10.0,
+   300.0
+  ],
+  "not": "Användarens exempel 2026-11-06. Bärvåg -237 Hz från 7.02220 MHz."
+ },
+ {
+  "namn": "CW 3,505 MHz",
+  "frekvens": 3504981,
+  "fam": [
+   "OOK"
+  ],
+  "bredd": [
+   10.0,
+   300.0
+  ],
+  "not": "Användarens exempel 2026-11-06. Bärvåg -19 Hz från 3.50500 MHz."
+ }
+]

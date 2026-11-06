@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 2.9.0 (2026-11-06)
+
+- **Automatisk bandbredd i signalanalysen.** I läget Auto mäter analysen själv hur bred signalen är: först en bred överblick, sedan avsmalnad kanal. Den mäter mot brusgolvet, så AM-sidband räknas med. Tätt liggande signaler, till exempel modem med 3 kHz mellanrum, skiljs åt. Tidigare blev det ofta bara bärvågen (cirka 400 Hz).
+- **Symboltakt och ramperiod.** För modem med en bärvåg söks symboltakten nära bandbredden, och ramperioden hittas med autokorrelation. Den visas i panelen, till exempel "106,7 ms = 256 symboler". STANAG 4285 känns igen på ramperioden 106,67 ms. Det är verifierat mot riktiga sändningar och stämmer med SigIDWikis ACF.
+- **AM känns igen** på bärvågens andel av effekten. Tidigare klassades AM ofta som OFDM.
+- **FT8** finns i signaldatabasen.
+- **Mätverktyget `analystest.py`** kör analysen på facitklipp (inspelade från KiwiSDR, se `facit.json`) och på syntetiska signaler. Det visar träffsäkerhet och förväxlingar och jämför med en tidigare körning.
+- Rättat: RTTY-avkodaren kunde krascha när symboltakten saknades. Rubriken i analysen visar "mäter bandbredd …" och sedan den uppmätta bredden.
+
 ## 2.8.1 (2026-11-06)
 
 - **Signalanalys:** bärvågens topp kapades i det lilla spektrumet. Skalan följde 99,5-percentilen, och en smal bärvåg ligger långt över den. Spektrumlinjen har nu en egen övre gräns som följer den högsta toppen: den stiger direkt och sjunker långsamt. Testat mot en riktig AM-sändning på 7,265 MHz via KiwiSDR.
