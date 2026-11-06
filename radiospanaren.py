@@ -1535,6 +1535,7 @@ class AudioOut:
         self.proc = None
         self.alive = False
         self.thread = None
+        self._unmute_lock = threading.Lock()
 
     def _spawn(self):
         cmds = [["pacat", "--playback", "--raw", "--format=s16le", "--rate=48000", "--channels=1",
@@ -1546,11 +1547,39 @@ class AudioOut:
                     err = open(STDERR_FILE, "ab")
                     self.proc = subprocess.Popen(c, stdin=subprocess.PIPE, stderr=err)
                     log.info("Ljud via %s", c[0])
+                    threading.Thread(target=self._unmute_own_stream, args=(self.proc.pid,),
+                                     name="Ljudkontroll", daemon=True).start()
                     return True
                 except OSError as e:
                     log.error("Kunde inte starta %s: %s", c[0], e)
         log.error("Hittar varken pacat eller pw-cat – inget ljud. Installera: sudo dnf install pulseaudio-utils")
         return False
+
+    def _unmute_own_stream(self, pid):
+        """PipeWire/stream-restore minns mute per program. Avmuta vår egen ström om den är tystad."""
+        if not self._unmute_lock.acquire(blocking=False):
+            return
+        try:
+            for _ in range(12):
+                try:
+                    r = subprocess.run(["pactl", "--format=json", "list", "sink-inputs"],
+                                       capture_output=True, text=True, timeout=2)
+                    if r.returncode != 0:
+                        return
+                    for si in json.loads(r.stdout or "[]"):
+                        props = si.get("properties") or {}
+                        if str(props.get("application.process.id")) != str(pid):
+                            continue
+                        if si.get("mute"):
+                            subprocess.run(["pactl", "set-sink-input-mute", str(si["index"]), "0"],
+                                           capture_output=True, timeout=2)
+                            log.warning("Ljudströmmen var mutad i PipeWire – avmutade den")
+                        return
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    return
+                time.sleep(0.25)
+        finally:
+            self._unmute_lock.release()
 
     def start(self):
         if self.alive:
@@ -4025,8 +4054,15 @@ def run_gui(args):
             info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             self.kand = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
             self.kand.add_css_class("analys-ram")
-            self.kand.set_markup("<b>Möjliga signaltyper</b>\n–")
+            self.kand.set_markup("<b>Signaltyp</b>\n–")
             info.append(self.kand)
+            self.alt = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
+            self.alt.add_css_class("analys-ram")
+            self.alt_exp = Gtk.Expander(label="Andra möjliga")
+            self.alt_exp.set_child(self.alt)
+            self.alt_exp.set_expanded(False)
+            self.alt_exp.set_visible(False)
+            info.append(self.alt_exp)
             info.append(Gtk.Label(label="Klartext från avkodaren", xalign=0, css_classes=["dim-label"]))
             self.textbuf = Gtk.TextBuffer()
             tv = Gtk.TextView(buffer=self.textbuf, editable=False, wrap_mode=Gtk.WrapMode.CHAR, monospace=True,
@@ -4258,7 +4294,8 @@ def run_gui(args):
                 self._set("klass", "Ingen signal" if r else "–")
                 if r:
                     self._set("snr", f"{r.get('snr', 0):.1f} dB")
-                self.kand.set_markup("<b>Möjliga signaltyper</b>\n–")
+                self.kand.set_markup("<b>Signaltyp</b>\n–")
+                self.alt_exp.set_visible(False)
                 return
             fam = r["fam"]
             self._set("klass", r["klass"])
@@ -4288,16 +4325,33 @@ def run_gui(args):
             if r.get("symboler") and len(vals) < 3:
                 self._set(("avk1", "avk2", "avk3")[len(vals)], r["symboler"][-40:], "Symboler (senaste)")
             k = r.get("kandidater") or []
-            lines = ["<b>Möjliga signaltyper</b>"]
-            if not k:
+            pick = r.get("kandidat") or (k[0] if k else None)
+            locked = bool(r.get("kandidat_las"))
+            lines = [f"<b>Signaltyp{' (låst)' if locked else ' (trolig)'}</b>"]
+            if pick is None:
                 lines.append("<span alpha='60%'>ingen känd typ passar</span>")
-            for sc, e, why in k:
+            else:
+                sc, e, why = pick
                 kat = e.get("kat", "")
                 colr = {"militär": "#ff7a5c", "myndighet": "#ffb547"}.get(kat, "#7fe0d0")
                 lines.append(f"<span foreground='{colr}'>●</span> <b>{GLib.markup_escape_text(e['namn'])}</b> "
                              f"<span alpha='70%'>{sc:.0f} % · {GLib.markup_escape_text(kat)}</span>")
-            if k:
-                lines.append(f"<span size='small' alpha='75%'>{GLib.markup_escape_text(k[0][1].get('info', ''))}</span>")
+                lines.append(f"<span size='small' alpha='75%'>{GLib.markup_escape_text(e.get('info', ''))}</span>")
+                rest = [x for x in k if x[1].get("namn") != e.get("namn")]
+                if rest:
+                    al = []
+                    for sc2, e2, _why in rest:
+                        kat2 = e2.get("kat", "")
+                        colr2 = {"militär": "#ff7a5c", "myndighet": "#ffb547"}.get(kat2, "#7fe0d0")
+                        al.append(f"<span foreground='{colr2}'>●</span> <b>{GLib.markup_escape_text(e2['namn'])}</b> "
+                                  f"<span alpha='70%'>{sc2:.0f} % · {GLib.markup_escape_text(kat2)}</span>")
+                    self.alt.set_markup("\n".join(al))
+                    self.alt_exp.set_label(f"Andra möjliga ({len(rest)})")
+                    self.alt_exp.set_visible(True)
+                else:
+                    self.alt_exp.set_visible(False)
+            if pick is None:
+                self.alt_exp.set_visible(False)
             self.kand.set_markup("\n".join(lines))
 
         def copy(self):

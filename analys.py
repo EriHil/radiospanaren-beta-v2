@@ -13,6 +13,7 @@ Signalanalys för Radiospanaren.
 
 Igenkänningen jämför mätvärdena mot signaldb.py.
 """
+import logging
 import math
 import threading
 import time
@@ -23,6 +24,8 @@ from scipy.signal import firwin, upfirdn, find_peaks
 from scipy.ndimage import gaussian_filter1d, uniform_filter1d
 
 import signaldb
+
+log = logging.getLogger("radiospanaren")
 
 FAM_NAMN = {
     "BRUS": "Ingen signal / brus",
@@ -890,6 +893,11 @@ AVKODARE = [RttyAvkodare, CwAvkodare]   # fler läggs till längst ner (analysav
 # Arbetstråd
 # ════════════════════════════════════════════════════════════════════
 class Analyzer:
+    LOCK_SCORE = 55.0          # lägsta poäng för att en kandidat får låsas
+    LOCK_STEPS = 3             # antal mätningar i rad innan låsning
+    LOCK_SWITCH_STEPS = 6      # en annan kandidat måste ligga högst så länge för att ta över
+    LOCK_HOLD = 2.5            # sekunder som låset hålls kvar när signalen tappas
+
     def __init__(self, sr, user_db=None):
         self.tap = ChannelTap(sr)
         self.db = signaldb.load(user_db)
@@ -907,6 +915,9 @@ class Analyzer:
         self._stop = threading.Event()
         self._thr = None
         self.paused = False
+        self.signal_lock = None            # stabil signaltyp: {"namn", "post", "score", "last"}
+        self._lock_top = None
+        self._lock_top_n = 0
 
     def start(self):
         if self._thr is None:
@@ -920,6 +931,49 @@ class Analyzer:
         self.tap.set_target(f, bw)
         self.result = None
         self.result_id += 1
+        self._reset_lock()
+
+    def _reset_lock(self):
+        self.signal_lock = None
+        self._lock_top = None
+        self._lock_top_n = 0
+
+    def _lock_candidate(self, feat, ks, now):
+        """Lås visningen till en stabil signaltyp i stället för att listan hoppar mellan likvärdiga förslag."""
+        top = ks[0] if ks and ks[0][0] >= self.LOCK_SCORE else None
+        name = top[1].get("namn") if top else None
+        if name != self._lock_top:
+            self._lock_top = name
+            self._lock_top_n = 0
+        if name:
+            self._lock_top_n += 1
+
+        lock = self.signal_lock
+        if lock is None:
+            if top and self._lock_top_n >= self.LOCK_STEPS:
+                self.signal_lock = {"namn": name, "post": top[1], "score": top[0], "last": now}
+                log.info("Signalanalys: låst till %s (%.0f %%)", name, top[0])
+        else:
+            cur = next((x for x in ks if x[1].get("namn") == lock["namn"]), None)
+            if cur is not None and cur[0] >= self.LOCK_SCORE - 10:
+                lock["score"] = cur[0]
+                lock["last"] = now
+            if name and name != lock["namn"] and self._lock_top_n >= self.LOCK_SWITCH_STEPS:
+                # En ny typ har legat högst tillräckligt länge – följ den i stället.
+                self.signal_lock = {"namn": name, "post": top[1], "score": top[0], "last": now}
+                log.info("Signalanalys: byter lås till %s (%.0f %%)", name, top[0])
+            elif now - lock["last"] > self.LOCK_HOLD:
+                log.info("Signalanalys: släpper låset på %s", lock["namn"])
+                self.signal_lock = None
+
+        lock = self.signal_lock
+        if lock is not None:
+            cur = next((x for x in ks if x[1].get("namn") == lock["namn"]), None)
+            feat["kandidat"] = cur or (lock["score"], lock["post"], "")
+            feat["kandidat_las"] = True
+        else:
+            feat["kandidat"] = top or (ks[0] if ks else None)
+            feat["kandidat_las"] = False
 
     def step(self, now=None):
         """Ett analyssteg: mät, jämför med databasen och kör avkodarna på nya samples.
@@ -935,6 +989,7 @@ class Analyzer:
         if gen != self._gen:
             self._gen = gen
             self._ptr = total
+            self._reset_lock()
             for dd in self.dec:
                 dd.reset()
                 dd._ok_feat = None
@@ -997,6 +1052,7 @@ class Analyzer:
         feat["avk_varden"] = vals
         if feat.get("fakta_fran"):
             feat["kandidater"] = signaldb.match(feat, f_abs, self.db, ac)
+        self._lock_candidate(feat, feat.get("kandidater") or [], now)
         self.result = feat
         self.result_id += 1
         return feat, new

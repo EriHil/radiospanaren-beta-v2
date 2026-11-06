@@ -228,12 +228,15 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
     • Ett diagram som byter efter signaltyp: konstellation (PSK/QAM),
       frekvensfördelning (FSK/FM), envelop (AM/SSB/CW) eller tonspektrum
       (parallelltonmodem/OFDM).
-    • "Möjliga signaltyper": mätvärdena jämförs med en signaldatabas med både
-      civila och militära vågformer – t.ex. STANAG 4285, MIL-STD-188-110,
-      STANAG 4539, Link 11 (CLEW/SLEW), ALE (MIL-STD-188-141), ANDVT, marinens
-      FSK-sändningar, HFDL, NAVTEX, RTTY, POCSAG, DMR, P25, TETRA, AIS och DRM.
-      Militärt/myndighet markeras med röd/orange prick. Det är igenkänning av
-      vågformen: krypterad trafik kan identifieras men inte läsas.
+    • "Signaltyp": mätvärdena jämförs med en signaldatabas med både civila och
+      militära vågformer – t.ex. STANAG 4285, MIL-STD-188-110, STANAG 4539,
+      Link 11 (CLEW/SLEW), ALE (MIL-STD-188-141), ANDVT, marinens FSK-
+      sändningar, HFDL, NAVTEX, RTTY, POCSAG, DMR, P25, TETRA, AIS och DRM.
+      När samma kandidat legat högst några mätningar i rad låses den (visas
+      som "låst"), så att listan inte hoppar mellan likvärdiga förslag. Andra
+      kandidater finns under "Andra möjliga". Militärt/myndighet markeras med
+      röd/orange prick. Det är igenkänning av vågformen: krypterad trafik kan
+      identifieras men inte läsas.
     • Klartext från avkodaren. Avkodaren väljs automatiskt efter signaltyp,
       eller tvingas fram med listan "Avkodare" (bra när klassningen tvekar):
         RTTY ......... Baudot 45,45/50/75/100 Bd, båda polariteterna
