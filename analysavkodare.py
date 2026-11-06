@@ -8,6 +8,7 @@ Fler avkodare för signalanalysen i Signalspanaren.
   ALE 2G             MIL-STD-188-141: 8-FSK 125 Bd, Golay(24,12), trippelredundans
   Väderfax           HF-fax 120 rader/min, IOC 576, svart 1500 Hz / vit 2300 Hz
   DMR                4FSK 4800 sym/s: synk, färgkod, burst-typ, LC-header (adresser, kryptering)
+  PSK31 / PSK63      BPSK 31,25 / 62,5 Bd med ITU/G3PLX varicode-alfabet
 
 Alla avkodare får komplext basband från analysens kanalutsnitt (mitt = analysens mål)
 och returnerar ny klartext. Hela meddelanden läggs i .msgs och visas i fliken Avkodat.
@@ -1159,7 +1160,193 @@ def make_dmr(fs, src=2400123, dst=2402, group=True, enc=False, cc=1, bursts=12):
     return np.exp(2j * np.pi * np.cumsum(f) / fs).astype(np.complex64)
 
 
-AVKODARE_NYA = [NavtexAvkodare, PocsagAvkodare, AleAvkodare, FaxAvkodare, DmrAvkodare]
+# ════════════════════════════════════════════════════════════════════
+# PSK31 / PSK63 (BPSK med G3PLX Varicode)
+# ════════════════════════════════════════════════════════════════════
+import re as _re
+
+_VARICODE_ASCII = [
+    "1010101011", "1011011011", "1011101101", "1101110111", "1011101011", "1101011111", "1011101111", "1011111101",
+    "1011111111", "11101111", "11101", "1101101111", "1011011101", "11111", "1101110101", "1110101011",
+    "1011110111", "1011110101", "1110101101", "1110101111", "1101011011", "1101101011", "1101101101", "1101010111",
+    "1101111011", "1101111101", "1110110111", "1101010101", "1101011101", "1110111011", "1011111011", "1101111111",
+    "1", "111111111", "101011111", "111110101", "111011011", "1011010101", "1010111011", "101111111",
+    "11111011", "11110111", "101101111", "111011111", "1110101", "110101", "1010111", "110101111",
+    "10110111", "10111101", "11101101", "11111111", "101110111", "101011011", "101101011", "110101101",
+    "110101011", "110110111", "11110101", "110111101", "111101101", "1010101", "111010111", "1010101111",
+    "1010111101", "1111101", "11101011", "10101101", "10110101", "1110111", "11011011", "11111101",
+    "101010101", "1111111", "111111101", "101111101", "11010111", "10111011", "11011101", "10101011",
+    "11010101", "111011101", "10101111", "1101111", "1101101", "101010111", "110110101", "101011101",
+    "101110101", "101111011", "1010101101", "111110111", "111101111", "111111011", "1010110111", "101101101",
+    "1011011111", "1011", "1011111", "101111", "101101", "11", "111101", "1011011",
+    "101011", "1101", "111101011", "10111111", "11011", "111011", "1111", "111",
+    "111111", "110111111", "10101", "10111", "101", "110101", "1111011", "1101011",
+    "11011111", "1011101", "111010101", "1010110101", "110111011", "1010110101", "1011010111", "1110110101",
+]
+VARICODE_DEC = {code: ("\n" if i in (10, 13) else chr(i))
+                for i, code in enumerate(_VARICODE_ASCII) if i in (10, 13) or 32 <= i <= 126}
+VARICODE_ENC = {chr(i): code for i, code in enumerate(_VARICODE_ASCII) if i in (10, 13) or 32 <= i <= 126}
+
+
+def make_psk31(fs, text, baud=31.25):
+    """Testsignal: BPSK31/63 med varicode och cosinusformade fasvändningar."""
+    bits = [0] * 32
+    for ch in text:
+        code = VARICODE_ENC.get(ch) or VARICODE_ENC.get(ch.upper(), "1")
+        bits += [int(b) for b in code] + [0, 0]
+    bits += [0] * 16
+    sps = fs / float(baud)
+    n = int(len(bits) * sps)
+    out = np.empty(n, np.float32)
+    cur = 1.0
+    for k, b in enumerate(bits):
+        i0, i1 = int(round(k * sps)), int(round((k + 1) * sps))
+        m = i1 - i0
+        if m <= 0:
+            continue
+        if b == 0:
+            out[i0:i1] = cur * np.cos(np.pi * np.arange(m) / m)
+            cur = -cur
+        else:
+            out[i0:i1] = cur
+    return out.astype(np.complex64)
+
+
+class PskAvkodare(FiAvkodare):
+    namn = "PSK31 / PSK63"
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        super().reset()
+        self.baud = 31.25
+        self.fc = None
+        self.ph = 0.0
+        self.raw = np.zeros(0, np.complex64)
+        self.tail = np.zeros(0, np.complex64)
+        self.t = None
+        self.prev_s = None
+        self.bitbuf = ""
+        self.text = ""
+        self.linebuf = ""
+        self.ok_chars = 0
+        self.bad_chars = 0
+
+    def passar(self, feat):
+        k = feat.get("kandidater") or []
+        if k and k[0][1]["namn"] in ("PSK31", "PSK63"):
+            return True
+        fam, b, occ = feat.get("fam"), feat.get("baud") or 0, feat.get("occ_bw") or 0
+        if fam in ("BPSK", "QPSK", "LIN") and (26 <= b <= 37 or 56 <= b <= 69):
+            return True
+        return fam == "BPSK" and 35 <= occ <= 150
+
+    def feed(self, z, fs, feat):
+        if len(z) == 0:
+            return ""
+        b_meas = feat.get("baud") or 0
+        new_baud = 62.5 if b_meas > 46 or (feat.get("occ_bw") or 0) > 105 else 31.25
+        if abs(new_baud - self.baud) > 1:
+            self.baud = new_baud
+            self.t = None
+            self.tail = np.zeros(0, np.complex64)
+        sps = fs / self.baud
+        self.raw = np.concatenate((self.raw, np.asarray(z, np.complex64)))[-int(fs * 2.0):]
+        if len(self.raw) >= int(fs * 0.5):
+            f0 = feat.get("f_mid", 0.0)
+            t_r = np.arange(len(self.raw)) / fs
+            zr = self.raw * np.exp(-2j * np.pi * f0 * t_r)
+            Z = np.fft.fft(zr)
+            fz = np.fft.fftfreq(len(zr), 1 / fs)
+            Z[np.abs(fz) > self.baud * 1.4] = 0
+            zr_lp = np.fft.ifft(Z)
+            nf = A._pow2(len(zr_lp) * 2)
+            df, s2 = A._power_line(zr_lp, fs, 2, self.baud * 0.9, nf)
+            if s2 >= 8:
+                cand = f0 + df
+                self.fc = cand if self.fc is None else (self.fc * 0.7 + cand * 0.3 if abs(cand - self.fc) < 5 else cand)
+        if self.fc is None:
+            self.fc = feat.get("f_mid", 0.0)
+        n = len(z)
+        w = -2 * np.pi * self.fc / fs
+        ph = self.ph + w * np.arange(n)
+        y = np.asarray(z, np.complex64) * np.exp(1j * ph).astype(np.complex64)
+        self.ph = float((self.ph + w * n) % (2 * np.pi))
+        buf = np.concatenate((self.tail, y))
+        sm_w = max(2, int(round(sps * 0.45)))
+        sm = A._smooth(buf.real, sm_w) + 1j * A._smooth(buf.imag, sm_w)
+        if self.t is None:
+            if len(sm) < int(sps * 8):
+                self.tail = buf
+                return ""
+            step_i = max(1, int(round(sps)))
+            best_k = max(range(16), key=lambda k: np.mean(np.abs(sm[int(k * sps / 16)::step_i])))
+            self.t = (best_k / 16.0 + 1.0) * sps
+        t = self.t
+        out = []
+        hw = max(1, int(sps * 0.35))
+        while t + hw + 1 < len(sm):
+            i = int(round(t))
+            s = sm[i]
+            if self.prev_s is not None:
+                dot = float(s.real * self.prev_s.real + s.imag * self.prev_s.imag)
+                bit = "1" if dot >= 0 else "0"
+                if bit == "0":
+                    a_idx = max(0, int(round(t - 0.85 * sps)))
+                    b_idx = min(len(sm), int(round(t - 0.15 * sps)) + 1)
+                    if b_idx - a_idx > 2:
+                        dip = a_idx + int(np.argmin(np.abs(sm[a_idx:b_idx])))
+                        err = dip - (t - 0.5 * sps)
+                        t += float(np.clip(err, -sps / 4, sps / 4)) * 0.2
+                self.bitbuf += bit
+                if self.bitbuf.endswith("00"):
+                    code = self.bitbuf[:-2].lstrip("0")
+                    self.bitbuf = ""
+                    if code:
+                        ch = VARICODE_DEC.get(code)
+                        if ch:
+                            self.ok_chars += 1
+                            out.append(ch)
+                            self.text = (self.text + ch)[-2000:]
+                            self.linebuf += ch
+                            if ch == "\n" or len(self.linebuf) >= 60:
+                                self._emit_line()
+                        else:
+                            self.bad_chars += 1
+                elif len(self.bitbuf) > 16:
+                    self.bitbuf = self.bitbuf[-12:]
+            self.prev_s = s
+            t += sps
+        cut = max(0, int(t - 2 * sps))
+        self.tail = buf[cut:]
+        self.t = t - cut
+        return "".join(out)
+
+    def _emit_line(self):
+        ln = self.linebuf.strip()
+        self.linebuf = ""
+        if len(ln) >= 6:
+            m = _re.search(r"\b([A-Z0-9]{1,3}[0-9][A-Z0-9]{1,4})\b", ln.upper())
+            src = m.group(1) if m else ""
+            self.msg("PSK63" if self.baud > 45 else "PSK31", src, ln, kind=f"{self.baud:g} Bd BPSK")
+
+    def har_synk(self):
+        return self.ok_chars >= 5 and self.ok_chars > self.bad_chars
+
+    def fakta(self):
+        namn = "PSK63" if self.baud > 45 else "PSK31"
+        return {"baud": self.baud, "fam": "BPSK", "klass": f"BPSK ({namn})"}
+
+    def varden(self):
+        namn = "PSK63" if self.baud > 45 else "PSK31"
+        if not self.ok_chars:
+            return [(namn, "söker tecken …")]
+        tot = self.ok_chars + self.bad_chars
+        return [(namn, f"{self.ok_chars} tecken ({100 * self.ok_chars / max(1, tot):.0f} % giltiga varicode)")]
+
+
+AVKODARE_NYA = [NavtexAvkodare, PocsagAvkodare, AleAvkodare, FaxAvkodare, DmrAvkodare, PskAvkodare]
 for _k in AVKODARE_NYA:                 # registrera i analysen (oavsett vilken modul som laddades först)
     if _k not in A.AVKODARE:
         A.AVKODARE.append(_k)

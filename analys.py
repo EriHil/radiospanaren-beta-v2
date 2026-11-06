@@ -767,6 +767,8 @@ def analyze(z, fs, bw):
         nl = {"BPSK": 2, "QPSK": 4, "PSK8": 8}.get(fam, 4)
         out["konst"] = _constellation(zo, fs, out["baud"], lines[nl][0], nl)
         out["psk_m"] = M
+    if out.get("ram_ms"):
+        out["ram_raster"] = _ram_raster(zo, fs, out["ram_ms"], out.get("baud"))
     if fam in ("FSK2", "FSK4", "MSK") and out.get("baud"):
         out["symboler"] = _fsk_symbols(fi, fs, out["baud"], tones)
     if fam in ("AM", "SSB", "OOK"):
@@ -774,6 +776,35 @@ def analyze(z, fs, bw):
         out["kurva"] = sm[-400 * k::k] / p95
     out["ms"] = (time.perf_counter() - t0) * 1000
     return out
+
+
+def _ram_raster(z, fs, ram_ms, baud=None):
+    """2D-ramraster (som i SigDigger): varje rad är en ram (ram_ms), varje kolumn en symbol.
+    Synkord och pilotsymboler har samma fassteg i varje ram och framträder som lodräta ränder."""
+    if not ram_ms or ram_ms <= 0:
+        return None
+    W = int(round(ram_ms * baud / 1000.0)) if (baud and 16 <= ram_ms * baud / 1000.0 <= 1024) else 200
+    frame_samps = ram_ms * 1e-3 * fs
+    n_frames = int(len(z) / frame_samps)
+    if n_frames < 3:
+        return None
+    sps = frame_samps / W
+    pos = np.arange(n_frames * W) * sps
+    syms = _sample(np.asarray(z, np.complex64), pos)
+    if len(syms) < n_frames * W:
+        n_frames = len(syms) // W
+        if n_frames < 3:
+            return None
+        syms = syms[:n_frames * W]
+    syms = syms.reshape(n_frames, W)
+    dph = np.angle(syms * np.conj(np.roll(syms, 1, axis=1)))
+    u = np.exp(1j * dph)
+    coh = np.abs(np.mean(u[1:] * np.conj(u[:-1]), axis=0))
+    kw = max(4, W // 8)
+    s_coh = np.convolve(np.r_[coh, coh[:kw - 1]], np.ones(kw), mode="valid")[:W]
+    shift = int(np.argmax(s_coh))
+    dph = np.roll(dph, -shift, axis=1)
+    return ((np.cos(dph) * 0.5 + 0.5) * 255).astype(np.uint8)
 
 
 def _ramperiod(z, fs, lo_ms=5.0, hi_ms=250.0, min_r=0.12, min_kvot=6.0):
@@ -1480,6 +1511,8 @@ class Analyzer:
         feat = analyze(z, fs, bw)
         self._stabil_familj(feat)
         self._stabil_ram(feat)
+        if feat.get("ram_ms") and feat.get("ram_raster") is None:
+            feat["ram_raster"] = _ram_raster(z, fs, feat["ram_ms"], feat.get("baud"))
         self._lagbaud_steg(feat, tgt)
         f_abs = tgt + feat.get("f_mid", 0.0)
         feat["f_abs"] = f_abs

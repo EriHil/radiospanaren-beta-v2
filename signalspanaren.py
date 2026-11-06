@@ -1072,6 +1072,8 @@ class Engine:
         self.peak_count = 0
         self._peak_reset = True
         self.stats = {"blocks": 0, "proc_ms": 0.0, "overruns": 0}
+        self.adc_clip = 0.0
+        self.overload = False
         self._filt_key = None
         self._ph = 0.0
         self._ph_bfo = 0.0
@@ -1340,6 +1342,15 @@ class Engine:
                         f, self.rec_iq = self.rec_iq, None
                         if self.on_event:
                             self.on_event("iq_error", str(ex))
+
+        # ADC-överstyrning (8-bitars I/Q från RTL-SDR/rtl_tcp som slår i taket vid 0/255)
+        if raw is not None and getattr(raw, "dtype", None) == np.uint8 and len(raw):
+            cl = float(np.mean((raw[::64] <= 1) | (raw[::64] >= 254)))
+            self.adc_clip = self.adc_clip * 0.8 + cl * 0.2
+            self.overload = self.adc_clip > 0.005
+        else:
+            self.adc_clip = 0.0
+            self.overload = False
 
         # Spektrum (Welch, 16 segment)
         seg = x.reshape(-1, FFT_N) * self.win
@@ -3860,22 +3871,52 @@ def run_gui(args):
                 cr.set_source_surface(surf, 0, 0)
                 cr.paint()
                 cr.restore()
-            elif r.get("konst") is not None:
-                title = f"Konstellation ({r['klass'].split(' ')[0]})"
-                s = np.asarray(r["konst"])
-                cx, cy, rad = x0 + w / 2, y0 + h / 2, min(w, h) / 2 * 0.62
-                cr.set_source_rgba(*S["grid"][:3], 0.35)
-                cr.arc(cx, cy, rad, 0, 2 * math.pi)
-                cr.stroke()
-                cr.move_to(x0, cy)
-                cr.line_to(x0 + w, cy)
-                cr.move_to(cx, y0)
-                cr.line_to(cx, y0 + h)
-                cr.stroke()
-                cr.set_source_rgba(*col, 0.75)
-                for p in s:
-                    cr.rectangle(cx + p.real * rad - 1, cy - p.imag * rad - 1, 2.2, 2.2)
-                cr.fill()
+            elif r.get("konst") is not None or r.get("ram_raster") is not None:
+                ras = r.get("ram_raster")
+                has_k = r.get("konst") is not None
+                has_r = ras is not None and len(ras) > 0
+                if has_k and has_r:
+                    title = f"Konstellation · Ramraster ({ras.shape[1]} sym × {ras.shape[0]} ramar)"
+                    kw = w * 0.42
+                    rx0, rw = x0 + w * 0.45, w * 0.55
+                elif has_r:
+                    title = f"Ramraster ({r.get('ram_ms', 0):.1f} ms, {ras.shape[0]} ramar)"
+                    kw = 0
+                    rx0, rw = x0, w
+                else:
+                    title = f"Konstellation ({r['klass'].split(' ')[0]})"
+                    kw = w
+                    rx0, rw = 0, 0
+                if has_k:
+                    s = np.asarray(r["konst"])
+                    cx, cy, rad = x0 + kw / 2, y0 + h / 2, min(kw, h) / 2 * 0.62
+                    cr.set_source_rgba(*S["grid"][:3], 0.35)
+                    cr.arc(cx, cy, rad, 0, 2 * math.pi)
+                    cr.stroke()
+                    cr.move_to(x0, cy)
+                    cr.line_to(x0 + kw, cy)
+                    cr.move_to(cx, y0)
+                    cr.line_to(cx, y0 + h)
+                    cr.stroke()
+                    cr.set_source_rgba(*col, 0.75)
+                    for p in s:
+                        cr.rectangle(cx + p.real * rad - 1, cy - p.imag * rad - 1, 2.2, 2.2)
+                    cr.fill()
+                if has_r:
+                    surf = gray_surface(ras)
+                    cr.save()
+                    cr.rectangle(rx0, y0, rw, h)
+                    cr.clip()
+                    cr.translate(rx0, y0)
+                    cr.scale(rw / max(1, ras.shape[1]), h / max(1, ras.shape[0]))
+                    cr.set_source_surface(surf, 0, 0)
+                    cr.get_source().set_filter(cairo.FILTER_NEAREST)
+                    cr.paint()
+                    cr.restore()
+                    cr.set_source_rgba(*S["grid"][:3], 0.5)
+                    cr.rectangle(rx0 + 0.5, y0 + 0.5, rw - 1, h - 1)
+                    cr.set_line_width(1)
+                    cr.stroke()
             elif r.get("fam") == "OFDM" and r.get("spec_f") is not None:
                 title = f"Tonspektrum ({r.get('toner') or '?'} toner)"
                 f, d = np.asarray(r["spec_f"]), np.asarray(r["spec_db"])
@@ -5665,8 +5706,23 @@ def run_gui(args):
             box.append(info)
             g = Adw.PreferencesGroup()
             fr = Adw.EntryRow(title="Känd frekvens (MHz)")
-            fr.set_text(fmt_mhz(self.freq))
+            an_r = getattr(self.an_panel, "last", None) or {}
+            f_init = an_r.get("f_abs") or self.freq
+            # Avrunda till närmaste jämna kHz som startförslag (standardkanaler ligger nästan alltid på jämna kHz)
+            fr.set_text(fmt_mhz(round(f_init / 1000.0) * 1000.0))
             g.add(fr)
+            presets = Gtk.Box(spacing=6, wrap=True if hasattr(Gtk.Box, "set_wrap") else False)
+            presets_lbl = Gtk.Label(label="Snabbval:", xalign=0, css_classes=["dim-label"])
+            presets.append(presets_lbl)
+            for lbl, f_p in (("Närmaste kHz", round(f_init / 1000.0) * 1000.0),
+                             ("RWM 4,996", 4.996e6), ("RWM 9,996", 9.996e6), ("RWM 14,996", 14.996e6)):
+                pb = Gtk.Button(label=lbl)
+                pb.add_css_class("flat")
+                pb.connect("clicked", lambda _b, hz=f_p: (
+                    meas_btn.set_active(False), fr.set_text(fmt_mhz(hz)),
+                    meas_btn.set_active(True) if self.engine.running else None))
+                presets.append(pb)
+            box.append(presets)
             sig_row = Adw.ActionRow(title="Signal", subtitle="–")
             off_row = Adw.ActionRow(title="Uppmätt avvikelse", subtitle="–")
             sug_row = Adw.ActionRow(title="Föreslagen korrigering", subtitle="–")
@@ -6877,7 +6933,14 @@ def run_gui(args):
             if e.running:
                 self.level_bar.set_value(float(np.clip(e.level + 120, 0, 120)))
                 self.level_lbl.set_text(f"{e.level:6.1f} dB")
-                self.sq_lbl.set_text("● SIGNAL" if e.sq_open and e.squelch > -150 else "")
+                if e.overload:
+                    self.sq_lbl.set_text(f"⚠ ÖVERSTYRD ({e.adc_clip * 100:.0f} %)")
+                    now_t = time.monotonic()
+                    if now_t - getattr(self, "_ovl_toast_t", 0.0) > 20.0:
+                        self._ovl_toast_t = now_t
+                        self.toast("⚠ Mottagaren överstyrs (ADC klipper) – sänk förstärkningen")
+                else:
+                    self.sq_lbl.set_text("● SIGNAL" if e.sq_open and e.squelch > -150 else "")
             self.scanner.tick()
             try:
                 self.an_panel.tick()
@@ -6922,8 +6985,11 @@ def run_gui(args):
                                        if self.suggested else "inga än")
             self.sugg_btn.set_sensitive(bool(self.suggested))
             if e.running:
+                drops = getattr(e.source, "dropped", 0)
+                drop_txt = f", {drops} tappade USB-block" if drops else ""
+                adc_txt = f", ⚠ ADC klipper ({e.adc_clip * 100:.1f} %)" if e.overload else ""
                 self.stats_row.set_subtitle(f"{e.stats['proc_ms']:.1f} ms per block (max {BLOCK / SR * 1000:.0f}), "
-                                            f"{e.stats['overruns']} överskridanden")
+                                            f"{e.stats['overruns']} överskridanden{drop_txt}{adc_txt}")
             return True
 
         def _on_close(self, *_):
@@ -7363,6 +7429,7 @@ def selftest(seconds=4.0):
                                    np.zeros(48000, np.complex64))), 25e3, 15000, 7, "SJALVTEST POCSAG"),
         ("ALE", V.make_ale(48000, [("TO", "SM5")] * 3 + [("TIS", "HQ1")] * 2), 41625, 3000, 6, "HQ1 anropar SM5"),
         ("DMR", V.make_dmr(48000, bursts=36), 25e3, 12500, 4, "grupp 2402 från 2400123"),
+        ("PSK31", V.make_psk31(48000, "DE SJALVTEST PSK31 "), 20e3, 300, 7, "SJALVTEST PSK31"),
     ]
     dec_ok = True
     for name, sig, off, bw, secs, want in tests:
