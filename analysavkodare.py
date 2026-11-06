@@ -789,6 +789,7 @@ class FaxAvkodare(FiAvkodare):
         self.hi = None
         self.status = "väntar på signal"
         self.zc_hist = []
+        self.fax_synk = False      # startton eller fasningspuls sedd – först då är det säkert fax
 
     def passar(self, feat):
         k = feat.get("kandidater") or []
@@ -810,6 +811,7 @@ class FaxAvkodare(FiAvkodare):
                     if self.status != "startton":
                         self._new_image()
                     self.status = "startton"
+                    self.fax_synk = True
                 elif abs(zc - 450) < 30:
                     self.status = "stoppton – bilden klar"
         lo_, hi_ = np.percentile(v, 1), np.percentile(v, 99)
@@ -860,6 +862,7 @@ class FaxAvkodare(FiAvkodare):
         others = np.delete(m, np.arange(i, i + w) % self.W)
         if dev[i] > 0.45 and np.std(others) < 0.18:      # bara under fasningsraderna
             self.offset = int(i % self.W)
+            self.fax_synk = True
 
     def _new_image(self):
         self.rows = []
@@ -867,7 +870,8 @@ class FaxAvkodare(FiAvkodare):
         self.bild = None
 
     def har_synk(self):
-        return len(self.rows) > 10
+        # rader ritas av vilken FM-signal som helst – kräv faxets startton eller fasningspuls
+        return self.fax_synk and len(self.rows) > 10
 
     def fakta(self):
         return {"klass": "Väderfax (FM 1500–2300 Hz)", "baud": None}

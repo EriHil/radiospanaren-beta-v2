@@ -1,5 +1,11 @@
 # Ändringslogg
 
+## 2.9.3 (2026-11-06)
+
+- **Väderfax föreslås inte längre för vilken FM-signal som helst.** Faxavkodaren kräver faxets startton eller fasningspuls innan den sätter signaltypen.
+- **Signaldatabasen** utesluter förslag med helt fel bredd (mer än 4 gånger för bred eller under en femtedel) och förslag utanför tjänstens frekvenser, till exempel marin VHF på 28 MHz. Den använder den uppmätta, stabila bandbredden.
+- FT8- och FT4-områdena är den inställda frekvensen plus 4 kHz ljudband.
+
 ## 2.9.2 (2026-11-06)
 
 - **FT8/FT4-detektor i signalanalysen.** Den tittar på upp till 4 s kring den punkt man klickade på, med ett fönster som är exakt en symbol långt (160 ms för FT8, 48 ms för FT4). FT8 och FT4 känns igen på att varje symbol ligger i en ton, att tonen byter ungefär varje symbol och att högst 8 respektive 4 intilliggande toner används. När läget har setts två gånger smalnas kanalen av till signalens egen bredd. Detektorn gav inga falska träffar på AM, CW, SSB, RTTY, STANAG eller RWM i facitklippen.

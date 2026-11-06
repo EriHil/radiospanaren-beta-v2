@@ -1251,6 +1251,7 @@ class Analyzer:
             feat.update(fam=best["fam"], klass=FAM_NAMN[best["fam"]] + f" ({best['namn']})",
                         baud=best["baud"], shift=best["baud"], toner=best["toner"], lagbaud=best["namn"])
             feat["occ_bw"] = best["baud"] * best["toner"]
+            feat["bredd_uppmatt"] = feat["occ_bw"]      # detektorns bredd gäller före kanalens
             feat["f_mid"] = getattr(self, "klick", tgt) - tgt
             # sedd minst två gånger: smalna av kanalen kring klicket (bättre SNR, rätt bredd i panelen)
             ft = self.fit
@@ -1431,6 +1432,8 @@ class Analyzer:
             if not (150 < ac < 4000):
                 ac = None
         feat["ljud_mitt"] = ac
+        if self.fit and self.fit.get("width"):
+            feat.setdefault("bredd_uppmatt", self.fit["width"])   # stabil (mätt över 2 s), till signaldatabasen
         feat["kandidater"] = signaldb.match(feat, f_abs, self.db, ac)
         zn, self._ptr = self.tap.since(self._ptr)
         vals, new = [], ""

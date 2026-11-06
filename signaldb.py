@@ -126,14 +126,12 @@ SIGNALER = [
 
     # ── Övrigt ───────────────────────────────────────────────────────
     dict(namn="FT8", kat="amatör", mod=["MFSK", "FSK4", "FSK2"], baud=6.25, shift=6.25, toner=8, bw=50,
-         ljud=None, f=[(1.8, 1.85), (3.57, 3.58), (5.35, 5.36), (7.074, 7.077), (10.136, 10.139),
-                       (14.074, 14.077), (18.1, 18.103), (21.074, 21.077), (24.915, 24.918), (28.074, 28.077),
-                       (50.313, 50.316), (144.174, 144.177)],
+         ljud=None, f=[(1.84, 1.8440), (3.573, 3.5770), (5.357, 5.3610), (7.074, 7.0780), (10.136, 10.1400), (14.074, 14.0780), (18.1, 18.1040), (21.074, 21.0780), (24.915, 24.9190), (28.074, 28.0780), (50.313, 50.3170), (144.174, 144.1780)],
+         # områden: inställd frekvens (USB) + 4 kHz ljudband
          info="Amatörradio, 8-FSK 6,25 Bd med 6,25 Hz tonavstånd (ca 50 Hz brett), 15 s sändningsperioder. "
               "Många signaler sida vid sida på standardfrekvenserna (USB 7,074 m.fl.)."),
     dict(namn="FT4", kat="amatör", mod=["FSK4", "MFSK"], baud=20.833, shift=20.833, toner=4, bw=83,
-         ljud=None, f=[(3.5755, 3.5785), (7.0475, 7.0505), (10.140, 10.143), (14.080, 14.083), (18.104, 18.107),
-                       (21.140, 21.143), (24.919, 24.922), (28.180, 28.183), (50.318, 50.321)],
+         ljud=None, f=[(3.5755, 3.5795), (7.0475, 7.0515), (10.14, 10.1440), (14.08, 14.0840), (18.104, 18.1080), (21.14, 21.1440), (24.919, 24.9230), (28.18, 28.1840), (50.318, 50.3220)],
          info="Amatörradio, 4-FSK 20,833 Bd med 20,833 Hz tonavstånd (ca 83 Hz brett), 7,5 s sändningsperioder – "
               "en snabbare FT8."),
     dict(namn="Morse (CW)", kat="amatör", mod=["OOK"], baud=None, shift=None, toner=None, bw=150, ljud=None,
@@ -236,10 +234,13 @@ def match(feat, freq_hz, db=None, audio_center=None, top=4):
                     why.append(f"{nt} toner")
                 else:
                     s -= 1
-        bw = feat.get("occ_bw")
+        # uppmätt bandbredd (stabil) före den momentana (FM-signalers upptagna bredd varierar kraftigt)
+        bw = feat.get("bredd_uppmatt") or feat.get("occ_bw")
         if e.get("bw") and bw:
             smax += 1
             ratio = bw / e["bw"]
+            if ratio > 4 or ratio < 0.2:
+                continue           # helt fel bredd (t.ex. 9,5 kHz FM är inte 1,1 kHz väderfax)
             if 0.5 <= ratio <= 1.6:
                 s += 1
             elif ratio > 3 or ratio < 0.25:
@@ -256,7 +257,7 @@ def match(feat, freq_hz, db=None, audio_center=None, top=4):
             if any(lo <= fmhz <= hi for lo, hi in e["f"]):
                 s += 2
             else:
-                s -= 2
+                continue           # utanför tjänstens frekvenser (t.ex. marin VHF på 28 MHz)
         score = max(0.0, min(100.0, 100.0 * s / smax + ram_bonus))
         if score >= 35:
             res.append((score, e, ", ".join(why)))
