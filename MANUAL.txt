@@ -1,5 +1,5 @@
 ══════════════════════════════════════════════════════════════════════
-  RADIOSPANAREN – MANUAL                                   version 2.0.0
+  RADIOSPANAREN – MANUAL                                   version 2.2.0
   SDR-mottagare, radioskanner och signallogg för Fedora
 ══════════════════════════════════════════════════════════════════════
 
@@ -33,7 +33,9 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   radiospanaren --acars             Slå på ACARS-avkodning (flygplan)
   radiospanaren --ais               Slå på AIS-avkodning (fartyg)
   radiospanaren --aprs              Slå på APRS-avkodning (144,800 MHz)
-  radiospanaren --flik avkodat      Visa fliken Avkodat (signallogg, bokmarken)
+  radiospanaren --flik avkodat      Visa fliken Avkodat (signallogg, bokmarken, analys)
+  radiospanaren --analysera 14.074  Analysera signalen på frekvensen i fliken
+                                    Signalanalys (MHz om ingen enhet)
   radiospanaren --fartygskarta      Öppna fartygskartan (AIS) direkt
   radiospanaren --aktivitetskarta   Öppna aktivitetskartan direkt
   radiospanaren --kalibrera         Öppna frekvenskalibreringen direkt
@@ -170,6 +172,45 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
  Bokmärken (fliken längst ner)
   Skriv ett namn och tryck "Lägg till aktuell frekvens". Dubbelklicka för
   att lyssna. Från signalloggen: markera en rad → "Spara som bokmärke".
+
+ Signalanalys (fliken längst ner, eller eget fönster)
+  Klicka på en aktiv bärvåg i vattenfallet. Mottagaren ställs in som vanligt
+  och signalen visas dessutom i fliken Signalanalys:
+    • Ett litet vattenfall som täcker just den kanalen (mushjul = zooma,
+      klick = flytta analysen till en annan topp i kanalen). Streckade linjer
+      visar analysbandbredden, gröna markeringar de toner som hittats.
+    • Mätvärden under vattenfallet: signaltyp, exakt mittfrekvens, SNR,
+      upptagen bandbredd, symboltakt (Bd), shift/tonavstånd, antal toner,
+      ljudfrekvens vid USB, FM-deviation, AM-modulationsgrad, subton (CTCSS),
+      sändningsmönster och en bedömning av trafiken (t.ex. "okrypterat
+      analogt tal", "klartext avkodas" eller "ofta krypterad").
+    • Ett diagram som byter efter signaltyp: konstellation (PSK/QAM),
+      frekvensfördelning (FSK/FM), envelop (AM/SSB/CW) eller tonspektrum
+      (parallelltonmodem/OFDM).
+    • "Möjliga signaltyper": mätvärdena jämförs med en signaldatabas med både
+      civila och militära vågformer – t.ex. STANAG 4285, MIL-STD-188-110,
+      STANAG 4539, Link 11 (CLEW/SLEW), ALE (MIL-STD-188-141), ANDVT, marinens
+      FSK-sändningar, HFDL, NAVTEX, RTTY, POCSAG, DMR, P25, TETRA, AIS och DRM.
+      Militärt/myndighet markeras med röd/orange prick. Det är igenkänning av
+      vågformen: krypterad trafik kan identifieras men inte läsas.
+    • Klartext från avkodaren: RTTY (Baudot 45,45/50/75/100 Bd, båda
+      polariteterna) och Morse (CW, takten läres in automatiskt) avkodas
+      direkt. Fler avkodare läggs till efter hand.
+  Skift + klick ställer bara in mottagaren, utan att byta analys.
+  Knappar: bandbredd (Auto = signalens egen bredd), "Följ inställd" (analysera
+  alltid demodulatorns kanal), "🎧 Lyssna" (ställer in demodulatorn på
+  signalen med lämplig modulering), rensa, kopiera mätvärden och ⧉ eget fönster.
+  Egna signaltyper: lägg en lista i ~/.config/radiospanaren/signaler.json, t.ex.
+    [{"namn": "Min fyr", "kat": "egen", "mod": ["OOK"], "bw": 100,
+      "f": [[3.5, 3.6]], "info": "Lokal fyr"}]
+  (fälten beskrivs överst i signaldb.py). Simulatorn har testsignaler på
+  99,73 (RTTY), 99,77 (8PSK 2400 Bd), 99,83 (8-FSK), 99,86 (16 toner),
+  99,90 (Morse) och 100,20 MHz (BPSK).
+
+ Utseende
+  Visning → Utseende: "Spanare" (mörk marin med bärnstensfärgade detaljer och
+  ny färgskala) eller "Klassisk". Tema: mörkt, ljust eller följ systemet.
+  Egen CSS kan läggas i ~/.config/radiospanaren/style.css.
 
  Kalibrera frekvensen (ppm)
   Mottagare → "Kalibrera frekvens (ppm) …" mäter dongelns frekvensfel mot en

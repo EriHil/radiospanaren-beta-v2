@@ -28,7 +28,7 @@ import threading
 
 APP_NAME = "Radiospanaren"
 APP_ID = "se.eh.Radiospanaren"
-VERSION = "2.1.1"
+VERSION = "2.2.0"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "radiospanaren")
@@ -192,6 +192,7 @@ try:
     from scipy import ndimage
     sys.path.insert(0, APP_DIR)
     import avkodare
+    import analys
 except ImportError as _e:  # pragma: no cover
     setup_logging()
     log.critical("Saknar Python-paket: %s. Installera med: sudo dnf install python3-numpy python3-scipy", _e)
@@ -253,19 +254,75 @@ DEFAULT_CONF = {
     "source": "rtl", "tcp_addr": "127.0.0.1:1234", "auto_gain": True, "gain": 30.0, "ppm": 0,
     "direct": 0, "biast": False, "freq": 100.0e6, "mode": "WFM", "bw": None, "squelch": -150.0,
     "volume": 80, "step_idx": 0, "db_min": -100.0, "db_max": -20.0, "zoom": 1, "spec_frac": 0.35,
-    "colormap": "klassisk", "theme": 0, "scan_mode": 0, "scan_start": "144.0", "scan_stop": "146.0",
+    "colormap": "spanare", "theme": 0, "skin": "spanare", "analys_bw_idx": 0, "analys_follow": False, "scan_mode": 0, "scan_start": "144.0", "scan_stop": "146.0",
     "scan_step_khz": 12.5, "scan_hold": 2.0, "scan_max_listen": 0.0, "scan_dwell_ms": 300, "det_thresh": 12.0,
     "det_enabled": True, "auto_rec": False, "web_enabled": False, "web_port": 8073,
     "web_public": False, "lockout": [], "bookmarks": DEFAULT_BOOKMARKS, "window": [1400, 900], "sidebar_width": 330,
 }
 
 COLORMAPS = {
+    "spanare": [(0, (2, 6, 14)), (0.2, (4, 30, 60)), (0.4, (0, 110, 130)), (0.6, (40, 220, 170)),
+                (0.78, (255, 200, 70)), (0.92, (255, 90, 40)), (1, (255, 245, 230))],
     "klassisk": [(0, (0, 0, 10)), (0.15, (0, 0, 90)), (0.35, (0, 90, 220)), (0.55, (0, 220, 200)),
                  (0.7, (240, 230, 0)), (0.85, (255, 60, 0)), (1, (255, 255, 255))],
     "grå": [(0, (0, 0, 0)), (1, (255, 255, 255))],
     "grön": [(0, (0, 5, 0)), (0.5, (0, 160, 40)), (0.85, (180, 255, 120)), (1, (255, 255, 255))],
     "inferno": [(0, (0, 0, 4)), (0.25, (87, 16, 110)), (0.5, (188, 55, 84)), (0.75, (249, 142, 9)),
                 (1, (252, 255, 164))],
+}
+
+
+# Utseenden: färger för spektrumvyn (r, g, b[, a]) och programmets CSS
+SKINS = {
+    "spanare": dict(namn="Spanare (mörk marin)", bg=(0.02, 0.04, 0.06), spec_bg=(0.015, 0.035, 0.05),
+                    grid=(0.4, 0.9, 0.85, 0.07), text=(0.6, 0.95, 0.9, 0.6), axis_bg=(0.035, 0.065, 0.09),
+                    fill_top=(0.15, 0.95, 0.75, 0.38), fill_bot=(0.05, 0.35, 0.4, 0.04), line=(0.45, 1.0, 0.85),
+                    band_bg=(0.03, 0.06, 0.085), tuned=(1.0, 0.62, 0.15), chan=(1, 0.75, 0.3, 0.12),
+                    analys=(0.95, 0.4, 1.0), track=(0.3, 1, 0.5, 0.85), bm=(1, 0.8, 0.3, 0.95)),
+    "klassisk": dict(namn="Klassisk", bg=(0.05, 0.06, 0.08), spec_bg=(0.04, 0.05, 0.07), grid=(1, 1, 1, 0.07),
+                     text=(1, 1, 1, 0.45), axis_bg=(0.09, 0.1, 0.13), fill_top=(0.35, 0.75, 1, 0.45),
+                     fill_bot=(0.1, 0.3, 0.6, 0.08), line=(0.55, 0.82, 1), band_bg=(0.08, 0.09, 0.11),
+                     tuned=(1, 0.25, 0.25), chan=(1, 1, 1, 0.13), analys=(1, 0.75, 0.2), track=(0.3, 1, 0.4, 0.8),
+                     bm=(1, 0.85, 0.2, 0.9)),
+}
+
+SKIN_CSS = {
+    "spanare": """
+@define-color accent_color #ffb547;
+@define-color accent_bg_color #c97d16;
+@define-color accent_fg_color #ffffff;
+@define-color window_bg_color #0c131b;
+@define-color window_fg_color #d5e6ee;
+@define-color view_bg_color #091017;
+@define-color view_fg_color #d5e6ee;
+@define-color headerbar_bg_color #0f1923;
+@define-color headerbar_fg_color #e2f1f7;
+@define-color headerbar_border_color #1c2b39;
+@define-color headerbar_backdrop_color #0c131b;
+@define-color sidebar_bg_color #0e1720;
+@define-color card_bg_color rgba(110, 200, 220, 0.05);
+@define-color card_shade_color rgba(0, 0, 0, 0.4);
+@define-color popover_bg_color #121d28;
+@define-color dialog_bg_color #111b25;
+@define-color success_color #3ee6a8;
+@define-color destructive_bg_color #c0392b;
+.freq-entry { font-family: "DejaVu Sans Mono", monospace; font-size: 17pt; font-weight: bold; color: #59ffd0;
+  background: #031016; border: 1px solid #13414b; border-radius: 6px; text-shadow: 0 0 6px rgba(89,255,208,0.5); }
+notebook > header { background: #0a1118; border-bottom: 1px solid #1c2b39; }
+notebook > header tab { padding: 4px 14px; color: alpha(@window_fg_color, 0.6); }
+notebook > header tab:checked { color: @accent_color; box-shadow: inset 0 -3px @accent_color; }
+levelbar > trough > block.filled { background: linear-gradient(to right, #1fd1a5, #ffb547 70%, #ff5a3c); }
+columnview.data-table { font-size: 9.5pt; }
+.analys-klass { font-size: 15pt; font-weight: bold; color: @accent_color; }
+.analys-text { font-family: monospace; }
+.analys-text text { background: #040b10; color: #9dffcf; }
+.analys-ram { background: alpha(#6ec8dc, 0.04); border: 1px solid #1c2b39; border-radius: 8px; padding: 6px; }
+""",
+    "klassisk": """
+.analys-klass { font-size: 15pt; font-weight: bold; color: @accent_color; }
+.analys-text { font-family: monospace; }
+.analys-ram { border: 1px solid alpha(currentColor, 0.15); border-radius: 8px; padding: 6px; }
+""",
 }
 
 
@@ -649,6 +706,8 @@ class SimSource(BaseSource):
                           (265999004, 59.3170, 18.0950, 0.0, 0.0, 5, "SIM FORTOJD", "SIMD", 70, "STOCKHOLM")]
         self.ais_i = 0
         self.ais_t0 = time.monotonic()
+        self.low = [(99.9e6 + off, sig, amp) for off, _n, sig, amp in analys.test_signals(48000)]
+        self.low.append((99.9e6, analys.make_morse(48000, "CQ CQ DE SM5SIM SM5SIM PSE K   ", 20), 0.05))
         self._take()
         log.info("Simulatorn startad")
 
@@ -697,6 +756,12 @@ class SimSource(BaseSource):
             elif kind == "USB":
                 on = (t % 5.0) < 2.5
                 x += a * on * (np.exp(1j * (ph + 2 * np.pi * 700 * t)) + 0.7 * np.exp(1j * (ph + 2 * np.pi * 1900 * t)))
+        for f, sig, a in self.low:          # analysens testsignaler (48 kHz-slingor)
+            fo = f - self.center
+            if abs(fo) > SR / 2:
+                continue
+            y = analys.loop_sample(sig, (self.n0 + np.arange(BLOCK)) / (SR / 48000))
+            x += a * y * np.exp(2j * np.pi * fo * t)
         self.n0 += BLOCK
         return x.astype(np.complex64), self.center, None
 
@@ -747,6 +812,7 @@ class Engine:
         self.running = False
         self.spec_q = deque(maxlen=32)
         self.decoders = None        # avkodare.DecoderHub
+        self.analyzer = None        # analys.Analyzer (signalanalysfliken)
         self.view_zoom = 1          # sätts av GUI: zoomfaktor för visningen
         self.view_center = None     # sätts av GUI: mittfrekvens för zoomad visning
         self._zkey = None
@@ -1019,6 +1085,12 @@ class Engine:
         self.spec_q.append((db, c, self._zoom_line(x, c)))
         if self.decoders is not None:
             self.decoders.feed(x, c)
+        if self.analyzer is not None:
+            try:
+                self.analyzer.tap.feed(x, c)
+            except Exception:
+                log.exception("Fel i signalanalysens kanalutsnitt")
+                self.analyzer = None
         with self.avg_lock:
             if self.avg_center != c or self.avg_lin is None:
                 self.avg_lin = p.copy()
@@ -1480,7 +1552,7 @@ def run_gui(args):
         import gi
         gi.require_version("Gtk", "4.0")
         gi.require_version("Adw", "1")
-        from gi.repository import Gtk, Adw, Gdk, GLib, Gio, GObject
+        from gi.repository import Gtk, Adw, Gdk, GLib, Gio, GObject, Pango
         import cairo
     except (ImportError, ValueError) as e:
         msg = (f"Saknar GTK4/libadwaita för Python ({e}).\n"
@@ -1638,9 +1710,20 @@ def run_gui(args):
             return band_h, spec_h, axis_h, band_h + spec_h + axis_h
 
         def on_click(self, g, n, x, y):
-            st = self.win.step()
-            f = round(self.x_to_f(x) / st) * st
-            self.win.tune(f)
+            w = self.win
+            st = w.step()
+            fc = self.x_to_f(x)
+            shift = bool(g.get_current_event_state() & Gdk.ModifierType.SHIFT_MASK)
+            w.tune(round(fc / st) * st)
+            if shift:              # Skift + klick: bara ställ in, ingen analys
+                return
+            hit = w.carrier_at(fc)
+            if hit:
+                w.analyse(hit[0], hit[1], show=True)
+            elif w.analys_shown():
+                e = w.engine
+                lo_, hi_ = e._chan_bounds(e.mode, e.bw, w.freq)
+                w.analyse((lo_ + hi_) / 2, hi_ - lo_, show=False)
 
         def on_scroll(self, ctrl, dx, dy):
             state = ctrl.get_current_event_state()
@@ -1667,7 +1750,8 @@ def run_gui(args):
         def on_draw(self, area, cr, W, H, *_):
             w = self.win
             conf = w.conf
-            cr.set_source_rgb(0.05, 0.06, 0.08)
+            S = w.skin()
+            cr.set_source_rgb(*S["bg"][:3])
             cr.paint()
             if W < 10 or H < 60:
                 return
@@ -1701,7 +1785,7 @@ def run_gui(args):
 
             # Spektrumbakgrund och dB-rutnät
             sy = band_h
-            cr.set_source_rgb(0.04, 0.05, 0.07)
+            cr.set_source_rgb(*S["spec_bg"][:3])
             cr.rectangle(0, sy, W, spec_h)
             cr.fill()
             dbmin, dbmax = conf["db_min"], conf["db_max"]
@@ -1712,18 +1796,18 @@ def run_gui(args):
             d = math.ceil(dbmin / step_db) * step_db
             while d < dbmax:
                 yy = sy + (dbmax - d) / rng * spec_h
-                cr.set_source_rgba(1, 1, 1, 0.07)
+                cr.set_source_rgba(*S["grid"])
                 cr.move_to(0, int(yy) + 0.5)
                 cr.line_to(W, int(yy) + 0.5)
                 cr.stroke()
-                cr.set_source_rgba(1, 1, 1, 0.45)
+                cr.set_source_rgba(*S["text"])
                 cr.move_to(3, yy - 2)
                 cr.show_text(f"{d:.0f}")
                 d += step_db
 
             # Frekvensaxel
             ay = sy + spec_h
-            cr.set_source_rgb(0.09, 0.1, 0.13)
+            cr.set_source_rgb(*S["axis_bg"][:3])
             cr.rectangle(0, ay, W, axis_h)
             cr.fill()
             raw = span / 8
@@ -1734,11 +1818,11 @@ def run_gui(args):
             ff = f0
             while ff < lo + span:
                 x = (ff - lo) / span * W
-                cr.set_source_rgba(1, 1, 1, 0.07)
+                cr.set_source_rgba(*S["grid"])
                 cr.move_to(int(x) + 0.5, sy)
                 cr.line_to(int(x) + 0.5, sy + spec_h)
                 cr.stroke()
-                cr.set_source_rgba(1, 1, 1, 0.6)
+                cr.set_source_rgba(*S["text"][:3], 0.75)
                 cr.move_to(int(x) + 0.5, ay)
                 cr.line_to(int(x) + 0.5, ay + 4)
                 cr.stroke()
@@ -1759,16 +1843,16 @@ def run_gui(args):
                 cr.line_to(W, sy + spec_h)
                 cr.close_path()
                 grad = cairo.LinearGradient(0, sy, 0, sy + spec_h)
-                grad.add_color_stop_rgba(0, 0.35, 0.75, 1, 0.45)
-                grad.add_color_stop_rgba(1, 0.1, 0.3, 0.6, 0.08)
+                grad.add_color_stop_rgba(0, *S["fill_top"])
+                grad.add_color_stop_rgba(1, *S["fill_bot"])
                 cr.set_source(grad)
                 cr.fill_preserve()
-                cr.set_source_rgb(0.55, 0.82, 1)
+                cr.set_source_rgb(*S["line"][:3])
                 cr.set_line_width(1.2)
                 cr.stroke()
 
             # Bandplan
-            cr.set_source_rgb(0.08, 0.09, 0.11)
+            cr.set_source_rgb(*S["band_bg"][:3])
             cr.rectangle(0, 0, W, band_h)
             cr.fill()
             for blo, bhi, name in BANDPLAN:
@@ -1793,7 +1877,7 @@ def run_gui(args):
                 x1 = (t["f"] + t["bw"] / 2 - lo) / span * W
                 if x1 < 0 or x0 > W:
                     continue
-                cr.set_source_rgba(0.3, 1, 0.4, 0.8)
+                cr.set_source_rgba(*S["track"])
                 cr.set_line_width(2)
                 cr.move_to(x0, sy + 3)
                 cr.line_to(max(x1, x0 + 2), sy + 3)
@@ -1805,7 +1889,7 @@ def run_gui(args):
                 x = (bm["freq"] - lo) / span * W
                 if 0 <= x <= W:
                     yy = sy + 16 + (i % 3) * 12
-                    cr.set_source_rgba(1, 0.85, 0.2, 0.9)
+                    cr.set_source_rgba(*S["bm"])
                     cr.move_to(x, sy + 6)
                     cr.line_to(x - 3, sy + 1)
                     cr.line_to(x + 3, sy + 1)
@@ -1819,18 +1903,43 @@ def run_gui(args):
             clo, chi = e._chan_bounds(e.mode, e.bw, 0)
             x0 = (w.freq + clo - lo) / span * W
             x1 = (w.freq + chi - lo) / span * W
-            cr.set_source_rgba(1, 1, 1, 0.13)
+            cr.set_source_rgba(*S["chan"])
             cr.rectangle(x0, sy, max(2, x1 - x0), spec_h)
             cr.fill()
-            cr.set_source_rgba(1, 1, 1, 0.07)
+            cr.set_source_rgba(*S["chan"][:3], S["chan"][3] * 0.55)
             cr.rectangle(x0, wf_y, max(2, x1 - x0), wf_h)
             cr.fill()
             xf = (w.freq - lo) / span * W
-            cr.set_source_rgb(1, 0.25, 0.25)
+            cr.set_source_rgb(*S["tuned"][:3])
             cr.set_line_width(1.5)
             cr.move_to(xf, sy)
             cr.line_to(xf, H)
             cr.stroke()
+
+            # Analysmål (signalanalysfliken)
+            ta = w.analyzer.tap.target if w.analyzer else None
+            if ta is not None:
+                bwa = w.analyzer.tap.bw or 1000
+                xa0 = (ta - bwa / 2 - lo) / span * W
+                xa1 = (ta + bwa / 2 - lo) / span * W
+                if xa1 >= 0 and xa0 <= W:
+                    if xa1 - xa0 < 8:
+                        xa0, xa1 = (xa0 + xa1) / 2 - 4, (xa0 + xa1) / 2 + 4
+                    yb = sy + spec_h - 2
+                    cr.set_source_rgba(*S["analys"][:3], 0.95)
+                    cr.set_line_width(2)
+                    cr.move_to(xa0, yb - 8)
+                    cr.line_to(xa0, yb)
+                    cr.line_to(xa1, yb)
+                    cr.line_to(xa1, yb - 8)
+                    cr.stroke()
+                    cr.set_source_rgba(*S["analys"][:3], 0.10)
+                    cr.rectangle(xa0, wf_y, xa1 - xa0, wf_h)
+                    cr.fill()
+                    cr.set_font_size(10)
+                    cr.set_source_rgba(*S["analys"][:3], 1)
+                    cr.move_to(xa1 + 3, yb - 2)
+                    cr.show_text("analys")
 
             # Muspekare
             if self.mouse:
@@ -2593,6 +2702,663 @@ def run_gui(args):
             return False
 
     # ── Huvudfönster ──
+    # ── Signalanalys ──
+    ANALYS_BW = [None, 500, 1000, 3000, 6000, 12500, 25000, 50000, 200000]
+    ANALYS_BW_NAMES = ["Auto (signalens bredd)", "500 Hz", "1 kHz", "3 kHz", "6 kHz", "12,5 kHz", "25 kHz",
+                       "50 kHz", "200 kHz"]
+
+    def _fmt_hz(v, signed=False):
+        if v is None:
+            return "–"
+        a = abs(v)
+        sg = ("+" if v >= 0 else "−") if signed else ("−" if v < 0 else "")
+        if a >= 1e6:
+            return f"{sg}{a / 1e6:.3f} MHz"
+        if a >= 1e3:
+            return f"{sg}{a / 1e3:.2f} kHz".replace(".", ",")
+        return f"{sg}{a:.0f} Hz"
+
+    class MiniWaterfall(Gtk.DrawingArea):
+        """Litet vattenfall som täcker den analyserade kanalen."""
+        ROWS = 220
+
+        def __init__(self, panel):
+            super().__init__(hexpand=True, vexpand=True)
+            self.panel = panel
+            self.set_size_request(260, 90)
+            self.wf = np.zeros((self.ROWS, analys.ChannelTap.WF_N), np.uint8)
+            self.spec = None
+            self.fs = None
+            self.bw = None
+            self.lo_db, self.hi_db = None, None
+            self.zoom = 1.0
+            self.mouse = None
+            self.set_draw_func(self.on_draw)
+            g = Gtk.GestureClick(button=1)
+            g.connect("pressed", self.on_click)
+            self.add_controller(g)
+            sc = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
+            sc.connect("scroll", self.on_scroll)
+            self.add_controller(sc)
+            mo = Gtk.EventControllerMotion()
+            mo.connect("motion", lambda c, x, y: self._mouse((x, y)))
+            mo.connect("leave", lambda c: self._mouse(None))
+            self.add_controller(mo)
+
+        def _mouse(self, m):
+            self.mouse = m
+            self.queue_draw()
+
+        def clear(self):
+            self.wf[:] = 0
+            self.spec = None
+            self.lo_db = self.hi_db = None
+            self.queue_draw()
+
+        def push(self, db, fs, bw):
+            if fs != self.fs or bw != self.bw:
+                self.wf[:] = 0
+                self.fs, self.bw = fs, bw
+                self.lo_db = None
+            fl, pk = float(np.median(db)), float(np.percentile(db, 99.5))
+            if self.lo_db is None:
+                self.lo_db, self.hi_db = fl - 4, max(pk, fl + 25)
+            else:
+                self.lo_db = self.lo_db * 0.95 + (fl - 4) * 0.05
+                self.hi_db = self.hi_db * 0.95 + max(pk, fl + 25) * 0.05
+            q = np.clip((db - self.lo_db) * (255.0 / max(1.0, self.hi_db - self.lo_db)), 0, 255).astype(np.uint8)
+            self.wf[1:] = self.wf[:-1]
+            self.wf[0] = q
+            self.spec = db if self.spec is None else self.spec * 0.6 + db * 0.4
+
+        def span(self):
+            if not self.fs:
+                return 1.0
+            return float(min(self.fs, max(200.0, (self.bw or self.fs) * 1.3 * self.zoom)))
+
+        def x_to_off(self, x):
+            sp = self.span()
+            return (x / max(1, self.get_width()) - 0.5) * sp
+
+        def on_click(self, g, n, x, y):
+            if self.fs:
+                self.panel.retarget_offset(self.x_to_off(x))
+
+        def on_scroll(self, ctrl, dx, dy):
+            self.zoom = float(np.clip(self.zoom * (1.25 if dy > 0 else 0.8), 0.15, 4.0))
+            self.queue_draw()
+            return True
+
+        def on_draw(self, area, cr, W, H, *_):
+            S = self.panel.win.skin()
+            cr.set_source_rgb(*S["bg"][:3])
+            cr.paint()
+            if not self.fs or W < 20 or H < 40:
+                cr.set_source_rgba(*S["text"])
+                cr.set_font_size(12)
+                msg = self.panel.empty_msg()
+                ext = cr.text_extents(msg)
+                cr.move_to(max(4, (W - ext.width) / 2), H / 2)
+                cr.show_text(msg)
+                return
+            N = self.wf.shape[1]
+            sp = self.span()
+            k0 = int(round(N / 2 - sp / self.fs * N / 2))
+            k1 = int(round(N / 2 + sp / self.fs * N / 2))
+            k0, k1 = max(0, k0), min(N, max(k0 + 2, k1))
+            spec_h = int(H * 0.3)
+            axis_h = 14
+            wf_y = spec_h + axis_h
+            wf_h = H - wf_y
+            # vattenfall
+            cols = np.linspace(k0, k1 - 1e-6, W).astype(np.int64)
+            rows = int(min(self.ROWS, max(1, wf_h)))
+            img = self.wf[:rows][:, cols]
+            rgba = np.ascontiguousarray(self.panel.win.view.lut[img])
+            surf = cairo.ImageSurface.create_for_data(memoryview(rgba), cairo.FORMAT_ARGB32, W, rows, W * 4)
+            cr.save()
+            cr.rectangle(0, wf_y, W, wf_h)
+            cr.clip()
+            cr.translate(0, wf_y)
+            cr.scale(1, wf_h / rows)
+            cr.set_source_surface(surf, 0, 0)
+            cr.get_source().set_filter(cairo.FILTER_NEAREST)
+            cr.paint()
+            cr.restore()
+            # spektrum
+            cr.set_source_rgb(*S["spec_bg"][:3])
+            cr.rectangle(0, 0, W, spec_h)
+            cr.fill()
+            if self.spec is not None:
+                v = self.spec[cols]
+                rng = max(1.0, self.hi_db - self.lo_db + 6)
+                yv = np.clip((self.hi_db + 3 - v) / rng, 0, 1) * spec_h
+                cr.move_to(0, spec_h)
+                for i in range(W):
+                    cr.line_to(i, yv[i])
+                cr.line_to(W, spec_h)
+                cr.close_path()
+                grad = cairo.LinearGradient(0, 0, 0, spec_h)
+                grad.add_color_stop_rgba(0, *S["fill_top"])
+                grad.add_color_stop_rgba(1, *S["fill_bot"])
+                cr.set_source(grad)
+                cr.fill_preserve()
+                cr.set_source_rgb(*S["line"][:3])
+                cr.set_line_width(1.1)
+                cr.stroke()
+            # axel
+            cr.set_source_rgb(*S["axis_bg"][:3])
+            cr.rectangle(0, spec_h, W, axis_h)
+            cr.fill()
+            cr.set_font_size(9)
+            cr.set_source_rgba(*S["text"])
+            for fr in (0.0, 0.25, 0.5, 0.75, 1.0):
+                off = (fr - 0.5) * sp
+                txt = "0" if abs(off) < 1e-6 else _fmt_hz(off, True)
+                ext = cr.text_extents(txt)
+                xx = fr * W - ext.width / 2
+                cr.move_to(min(max(2, xx), W - ext.width - 2), spec_h + 11)
+                cr.show_text(txt)
+
+            def xo(off):
+                return (off / sp + 0.5) * W
+            # kanalgränser
+            if self.bw:
+                cr.set_source_rgba(*S["analys"][:3], 0.8)
+                cr.set_line_width(1)
+                cr.set_dash([4, 3])
+                for e in (-self.bw / 2, self.bw / 2):
+                    cr.move_to(int(xo(e)) + 0.5, 0)
+                    cr.line_to(int(xo(e)) + 0.5, H)
+                cr.stroke()
+                cr.set_dash([])
+            # mätta toner och mittfrekvens
+            r = self.panel.last
+            if r and r.get("fam") not in (None, "BRUS"):
+                mid = r.get("f_mid", 0.0)
+                cr.set_source_rgba(*S["tuned"][:3], 0.9)
+                cr.set_line_width(1.5)
+                cr.move_to(xo(mid), 0)
+                cr.line_to(xo(mid), spec_h)
+                cr.stroke()
+                tones = [mid + t for t in r.get("fi_peaks", [])] if r.get("toner") and r.get("fam") != "OFDM" \
+                    else (r.get("spec_toner", []) if r.get("fam") == "OFDM" else [])
+                cr.set_source_rgba(*S["track"][:3], 0.95)
+                for t in tones:
+                    x = xo(t)
+                    cr.move_to(x, spec_h - 1)
+                    cr.line_to(x - 3, spec_h - 7)
+                    cr.line_to(x + 3, spec_h - 7)
+                    cr.close_path()
+                    cr.fill()
+                if r.get("occ_bw"):
+                    cr.set_source_rgba(*S["track"][:3], 0.35)
+                    cr.rectangle(xo(r["f_lo"]), 1, max(2, xo(r["f_hi"]) - xo(r["f_lo"])), 3)
+                    cr.fill()
+            if self.mouse:
+                mx, my = self.mouse
+                off = self.x_to_off(mx)
+                txt = _fmt_hz(off, True)
+                cr.set_font_size(11)
+                ext = cr.text_extents(txt)
+                cr.set_source_rgba(0, 0, 0, 0.7)
+                cr.rectangle(W - ext.width - 12, 3, ext.width + 8, 16)
+                cr.fill()
+                cr.set_source_rgb(1, 1, 1)
+                cr.move_to(W - ext.width - 8, 15)
+                cr.show_text(txt)
+                cr.set_source_rgba(1, 1, 1, 0.35)
+                cr.move_to(int(mx) + 0.5, 0)
+                cr.line_to(int(mx) + 0.5, H)
+                cr.stroke()
+
+    class AnalysDiagram(Gtk.DrawingArea):
+        """Konstellation (PSK/QAM), frekvensfördelning (FSK/FM), envelop (AM/SSB/CW) eller tonspektrum (OFDM)."""
+
+        def __init__(self, panel):
+            super().__init__()
+            self.panel = panel
+            self.set_size_request(200, 120)
+            self.set_draw_func(self.on_draw)
+
+        def on_draw(self, area, cr, W, H, *_):
+            S = self.panel.win.skin()
+            cr.set_source_rgb(*S["bg"][:3])
+            cr.paint()
+            r = self.panel.last
+            cr.set_font_size(10)
+            title = "Diagram"
+            pad = 8
+            x0, y0, w, h = pad, 18, W - 2 * pad, H - 18 - pad
+            cr.set_source_rgba(*S["grid"][:3], 0.25)
+            cr.rectangle(x0 + 0.5, y0 + 0.5, w, h)
+            cr.set_line_width(1)
+            cr.stroke()
+            if not r or r.get("fam") in (None, "BRUS"):
+                cr.set_source_rgba(*S["text"])
+                cr.move_to(pad, 12)
+                cr.show_text(title)
+                return
+            col = S["line"][:3]
+            if r.get("konst") is not None:
+                title = f"Konstellation ({r['klass'].split(' ')[0]})"
+                s = np.asarray(r["konst"])
+                cx, cy, rad = x0 + w / 2, y0 + h / 2, min(w, h) / 2 * 0.62
+                cr.set_source_rgba(*S["grid"][:3], 0.35)
+                cr.arc(cx, cy, rad, 0, 2 * math.pi)
+                cr.stroke()
+                cr.move_to(x0, cy)
+                cr.line_to(x0 + w, cy)
+                cr.move_to(cx, y0)
+                cr.line_to(cx, y0 + h)
+                cr.stroke()
+                cr.set_source_rgba(*col, 0.75)
+                for p in s:
+                    cr.rectangle(cx + p.real * rad - 1, cy - p.imag * rad - 1, 2.2, 2.2)
+                cr.fill()
+            elif r.get("fam") == "OFDM" and r.get("spec_f") is not None:
+                title = f"Tonspektrum ({r.get('toner') or '?'} toner)"
+                f, d = np.asarray(r["spec_f"]), np.asarray(r["spec_db"])
+                self._curve(cr, f, d, x0, y0, w, h, col)
+                lo, hi = f[0], f[-1]
+                cr.set_source_rgba(*S["track"][:3], 0.9)
+                for t in r.get("spec_toner", []):
+                    xx = x0 + (t - lo) / max(1e-9, hi - lo) * w
+                    cr.move_to(xx, y0 + h)
+                    cr.line_to(xx, y0 + h - 6)
+                cr.stroke()
+            elif r.get("kurva") is not None:
+                title = "Envelop (senaste ~sekunden)"
+                k = np.asarray(r["kurva"], float)
+                self._curve(cr, np.arange(len(k)), np.clip(k, 0, 1.4), x0, y0, w, h, col, fill=False, ymin=0)
+            elif r.get("hist") is not None:
+                title = "Frekvensfördelning"
+                c, hs = r["hist"]
+                self._curve(cr, np.asarray(c), np.asarray(hs, float), x0, y0, w, h, col, ymin=0)
+                cr.set_source_rgba(*S["track"][:3], 0.95)
+                lo, hi = c[0], c[-1]
+                for t in r.get("fi_peaks", []):
+                    xx = x0 + (t - lo) / max(1e-9, hi - lo) * w
+                    cr.move_to(xx, y0)
+                    cr.line_to(xx, y0 + 6)
+                cr.stroke()
+            cr.set_source_rgba(*S["text"])
+            cr.move_to(pad, 12)
+            cr.show_text(title)
+
+        @staticmethod
+        def _curve(cr, x, y, x0, y0, w, h, col, fill=True, ymin=None):
+            if len(x) < 2:
+                return
+            lo = float(np.min(y)) if ymin is None else ymin
+            hi = float(np.max(y))
+            rng = max(1e-9, hi - lo)
+            xs = x0 + (x - x[0]) / max(1e-9, x[-1] - x[0]) * w
+            ys = y0 + h - (y - lo) / rng * (h - 4)
+            cr.move_to(xs[0], ys[0])
+            for a, b in zip(xs[1:], ys[1:]):
+                cr.line_to(a, b)
+            if fill:
+                cr.line_to(xs[-1], y0 + h)
+                cr.line_to(xs[0], y0 + h)
+                cr.close_path()
+                cr.set_source_rgba(*col, 0.25)
+                cr.fill_preserve()
+            cr.set_source_rgba(*col, 0.95)
+            cr.set_line_width(1.2)
+            cr.stroke()
+
+    class AnalysPanel(Gtk.Box):
+        ROWS = [("klass", "Signaltyp"), ("freq", "Frekvens (mitt)"), ("avv", "Avvikelse från mål"),
+                ("snr", "SNR"), ("occ", "Upptagen bandbredd"), ("baud", "Symboltakt"),
+                ("shift", "Shift / tonavstånd"), ("toner", "Antal toner"), ("ljud", "Ljudfrekvens (USB/LSB)"),
+                ("dev", "Deviation"), ("am", "Modulationsgrad"), ("ctcss", "Subton (CTCSS)"),
+                ("skur", "Sändningsmönster"), ("env", "Envelopvariation"), ("trafik", "Trafik"),
+                ("avk1", ""), ("avk2", ""), ("avk3", "")]
+
+        def __init__(self, win):
+            super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.win = win
+            self.an = win.analyzer
+            self.last = None
+            self._rid = -1
+            self.text_t = 0
+            self.set_margin_top(6)
+            self.set_margin_start(6)
+            self.set_margin_end(6)
+            self.set_margin_bottom(6)
+
+            tb = Gtk.Box(spacing=6)
+            self.title = Gtk.Label(xalign=0, hexpand=True)
+            self.title.set_markup("<b>Signalanalys</b> – klicka på en bärvåg i vattenfallet")
+            self.title.set_ellipsize(Pango.EllipsizeMode.END)
+            tb.append(self.title)
+            self.bw_dd = Gtk.DropDown.new_from_strings(ANALYS_BW_NAMES)
+            self.bw_dd.set_selected(int(win.conf.get("analys_bw_idx", 0)) % len(ANALYS_BW))
+            self.bw_dd.set_tooltip_text("Analysbandbredd")
+            self.bw_dd.connect("notify::selected", self._on_bw)
+            tb.append(self.bw_dd)
+            self.follow = Gtk.ToggleButton(label="Följ inställd")
+            self.follow.set_tooltip_text("Analysera alltid den kanal som demodulatorn är inställd på")
+            self.follow.set_active(bool(win.conf.get("analys_follow", False)))
+            self.follow.connect("toggled", self._on_follow)
+            tb.append(self.follow)
+            b = Gtk.Button(label="🎧 Lyssna")
+            b.set_tooltip_text("Ställ in demodulatorn på den analyserade signalen")
+            b.connect("clicked", lambda *_: self.listen())
+            tb.append(b)
+            b = Gtk.Button(icon_name="edit-clear-symbolic")
+            b.set_tooltip_text("Rensa klartext")
+            b.connect("clicked", lambda *_: self.textbuf.set_text(""))
+            tb.append(b)
+            b = Gtk.Button(icon_name="edit-copy-symbolic")
+            b.set_tooltip_text("Kopiera mätvärden och klartext")
+            b.connect("clicked", lambda *_: self.copy())
+            tb.append(b)
+            self.detach_btn = Gtk.Button(icon_name="window-new-symbolic")
+            self.detach_btn.set_tooltip_text("Visa analysen i ett eget fönster")
+            self.detach_btn.connect("clicked", lambda *_: win.toggle_analys_window())
+            tb.append(self.detach_btn)
+            self.append(tb)
+
+            paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, vexpand=True)
+            # vänster: litet vattenfall överst, mätvärden under
+            left = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+            self.mini = MiniWaterfall(self)
+            fr = Gtk.Frame()
+            fr.set_child(self.mini)
+            left.set_start_child(fr)
+            left.set_resize_start_child(True)
+            left.set_shrink_start_child(False)
+            grid = Gtk.Grid(column_spacing=14, row_spacing=2)
+            grid.add_css_class("analys-ram")
+            self.cells = {}
+            self.grid = grid
+            self._cols = 0
+            for key, title in self.ROWS:
+                l1 = Gtk.Label(label=title, xalign=0, valign=Gtk.Align.START)
+                l1.add_css_class("dim-label")
+                l2 = Gtk.Label(label="–", xalign=0, hexpand=True, selectable=True, wrap=True)
+                l2.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                l2.add_css_class("analys-klass" if key == "klass" else "monospace")
+                self.cells[key] = (l1, l2)
+            self._layout_cells(2)
+            sw = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+            sw.set_size_request(-1, 60)
+            sw.set_child(grid)
+            left.set_end_child(sw)
+            left.set_shrink_end_child(False)
+            left.set_position(160)
+            paned.set_start_child(left)
+            paned.set_resize_start_child(True)
+            paned.set_shrink_start_child(False)
+
+            # höger: diagram, möjliga signaltyper och klartext
+            right = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+            self.diag = AnalysDiagram(self)
+            fr = Gtk.Frame()
+            fr.set_child(self.diag)
+            right.set_start_child(fr)
+            right.set_shrink_start_child(False)
+            info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            self.kand = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
+            self.kand.add_css_class("analys-ram")
+            self.kand.set_markup("<b>Möjliga signaltyper</b>\n–")
+            info.append(self.kand)
+            info.append(Gtk.Label(label="Klartext från avkodaren", xalign=0, css_classes=["dim-label"]))
+            self.textbuf = Gtk.TextBuffer()
+            tv = Gtk.TextView(buffer=self.textbuf, editable=False, wrap_mode=Gtk.WrapMode.CHAR, monospace=True,
+                              vexpand=True)
+            tv.add_css_class("analys-text")
+            tv.set_left_margin(6)
+            tv.set_top_margin(4)
+            tv.set_size_request(-1, 70)
+            self.textview = tv
+            info.append(tv)
+            sw2 = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+            sw2.set_child(info)
+            self.info_sw = sw2
+            right.set_end_child(sw2)
+            right.set_shrink_end_child(False)
+            right.set_position(150)
+            right.set_size_request(300, -1)
+            paned.set_end_child(right)
+            paned.set_resize_end_child(False)
+            paned.set_shrink_end_child(False)
+            self.append(paned)
+            self._update_rows(None)
+
+        def _layout_cells(self, cols):
+            """Två kolumner med mätvärden när det finns plats, annars en."""
+            if cols == self._cols:
+                return
+            self._cols = cols
+            for l1, l2 in self.cells.values():
+                if l1.get_parent() is not None:
+                    self.grid.remove(l1)
+                    self.grid.remove(l2)
+            for i, (key, _t) in enumerate(self.ROWS):
+                l1, l2 = self.cells[key]
+                c, r = (i % cols) * 2, i // cols
+                self.grid.attach(l1, c, r, 1, 1)
+                self.grid.attach(l2, c + 1, r, 1, 1)
+
+        # ── mål ──
+        def empty_msg(self):
+            st = self.an.tap.status
+            if self.an.tap.target is None:
+                return "Klicka på en bärvåg i det stora vattenfallet"
+            if not self.win.engine.running:
+                return "Starta mottagningen"
+            if st != "ok":
+                return f"Målet ligger {st}"
+            return "Väntar på data …"
+
+        def chosen_bw(self, auto_bw):
+            bw = ANALYS_BW[self.bw_dd.get_selected()] if self.bw_dd.get_selected() < len(ANALYS_BW) else None
+            if bw is None:
+                bw = float(np.clip(auto_bw * 1.35, 400, 250e3))
+            return bw
+
+        def set_target(self, f, auto_bw):
+            bw = self.chosen_bw(auto_bw)
+            self.auto_bw = auto_bw
+            self.an.set_target(f, bw)
+            self.last = None
+            self._rid = -1
+            self.mini.clear()
+            self.mini.zoom = 1.0
+            self.title.set_markup(f"<b>Analys:</b> {fmt_mhz(f)} MHz  ·  {_fmt_hz(bw)}  "
+                                  f"<span alpha='60%'>{GLib.markup_escape_text(band_name(f) or '')}</span>")
+            self._update_rows(None)
+            self.diag.queue_draw()
+            log.info("Signalanalys: %.6f MHz, bandbredd %.0f Hz", f / 1e6, bw)
+
+        def retarget_offset(self, off):
+            t = self.an.tap.target
+            if t is None:
+                return
+            f = t + off
+            snap = self.win.carrier_at(f, tol=max(200, (self.an.tap.bw or 3000) * 0.08))
+            self.set_target(snap[0] if snap else f, snap[1] if snap else getattr(self, "auto_bw", self.an.tap.bw))
+
+        def _on_bw(self, *_):
+            self.win.conf["analys_bw_idx"] = int(self.bw_dd.get_selected())
+            t = self.an.tap.target
+            if t is not None:
+                self.set_target(t, getattr(self, "auto_bw", self.an.tap.bw or 3000))
+
+        def _on_follow(self, b):
+            self.win.conf["analys_follow"] = b.get_active()
+            if b.get_active():
+                self.follow_tuned()
+
+        def follow_tuned(self):
+            e = self.win.engine
+            lo, hi = e._chan_bounds(e.mode, e.bw, self.win.freq)
+            f = (lo + hi) / 2
+            t = self.an.tap.target
+            if t is None or abs(t - f) > 1 or abs((self.an.tap.bw or 0) - self.chosen_bw(hi - lo)) > 1:
+                self.set_target(f, hi - lo)
+
+        def listen(self):
+            r = self.last
+            f = (r or {}).get("f_abs") or self.an.tap.target
+            if f is None:
+                return
+            m = self.win.engine.mode
+            fam = (r or {}).get("fam")
+            if fam in ("AM",) and m not in ("AM",):
+                m = "AM"
+            elif fam == "FM" and m not in ("NFM", "WFM"):
+                m = "NFM" if (r.get("occ_bw") or 0) < 40e3 else "WFM"
+            elif fam in ("FSK2", "MFSK", "OFDM", "PSK8", "QPSK", "BPSK", "LIN", "SSB", "MSK", "FSK4") \
+                    and f < 30e6 and m not in ("USB", "LSB"):
+                m = "USB"
+            elif fam == "OOK" and m not in ("CW", "USB", "LSB"):
+                m = "CW"
+            if m == "USB":
+                ac = (r or {}).get("ljud_mitt") or 1500
+                self.win.tune(f - ac, m)
+            elif m == "LSB":
+                self.win.tune(f + 1500, m)
+            else:
+                self.win.tune(f, m)
+
+        # ── uppdatering ──
+        def tick(self):
+            an = self.an
+            got = False
+            while an.tap.lines:
+                try:
+                    db, fs, tgt, bw = an.tap.lines.popleft()
+                except IndexError:
+                    break
+                self.mini.push(db, fs, bw)
+                got = True
+            if got or an.tap.target is None:
+                self.mini.queue_draw()
+            gw = self.grid.get_width()
+            if gw > 0:
+                self._layout_cells(2 if gw >= 620 else 1)
+            if self.follow.get_active():
+                self.follow_tuned()
+            an.dial, an.mode = self.win.freq, self.win.engine.mode
+            if an.result_id != self._rid:
+                self._rid = an.result_id
+                r = an.result
+                if r is not None and r.get("target") == an.tap.target:
+                    self.last = r
+                    self._update_rows(r)
+                    self.diag.queue_draw()
+            while an.text_q:
+                try:
+                    name, txt = an.text_q.popleft()
+                except IndexError:
+                    break
+                self.textbuf.insert(self.textbuf.get_end_iter(), txt)
+                self.text_t = time.time()
+                if self.textbuf.get_char_count() > 20000:
+                    s_ = self.textbuf.get_start_iter()
+                    e_ = self.textbuf.get_iter_at_offset(5000)
+                    self.textbuf.delete(s_, e_)
+                adj = self.info_sw.get_vadjustment()
+                GLib.idle_add(lambda: adj.set_value(adj.get_upper()) or False)
+
+        def _set(self, key, val, title=None):
+            l1, l2 = self.cells[key]
+            show = val not in (None, "", "–")
+            l1.set_visible(show)
+            l2.set_visible(show)
+            if show:
+                l2.set_text(str(val))
+                if title is not None:
+                    l1.set_text(title)
+
+        def traffic(self, r):
+            fam = r.get("fam")
+            if time.time() - self.text_t < 15:
+                return "Klartext – avkodas (se rutan till höger)"
+            if fam in ("AM", "FM", "SSB"):
+                return ("Analogt tal/ljud – okrypterat, tryck Lyssna" if r.get("ljudvariation", 0) > 2.5
+                        else "Analog – ingen tydlig talaktivitet just nu")
+            if fam == "OOK":
+                return "Morse – klartext om avkodningen ger läsbar text"
+            if fam == "BÄRVÅG":
+                return "Ingen information (ren bärvåg)"
+            k = r.get("kandidater") or []
+            if k:
+                info = k[0][1].get("info", "")
+                if "rypter" in info:
+                    return "Digital – ofta krypterad; kan identifieras men inte läsas"
+                if "lartext" in info:
+                    return "Digital – klartextprotokoll (avkodare för typen saknas än)"
+            return "Digital – innehåll okänt" if fam not in ("BRUS", None) else None
+
+        def _update_rows(self, r):
+            if not r or r.get("fam") in (None, "BRUS"):
+                for key, _t in self.ROWS:
+                    self._set(key, None)
+                self._set("klass", "Ingen signal" if r else "–")
+                if r:
+                    self._set("snr", f"{r.get('snr', 0):.1f} dB")
+                self.kand.set_markup("<b>Möjliga signaltyper</b>\n–")
+                return
+            fam = r["fam"]
+            self._set("klass", r["klass"])
+            self._set("freq", f"{fmt_mhz(r['f_abs'])} MHz")
+            self._set("avv", _fmt_hz(r.get("f_mid"), True))
+            self._set("snr", f"{r.get('snr', 0):.1f} dB (topp {r.get('peak_snr', 0):.0f})")
+            self._set("occ", _fmt_hz(r.get("occ_bw")))
+            b = r.get("baud")
+            self._set("baud", f"{b:.2f} Bd".replace(".", ",") if b else None)
+            sh = r.get("shift")
+            self._set("shift", _fmt_hz(sh) if sh else None)
+            self._set("toner", r.get("toner") if r.get("toner") else None)
+            ac = r.get("ljud_mitt")
+            self._set("ljud", f"{ac:.0f} Hz" if ac else None)
+            self._set("dev", f"±{_fmt_hz(r.get('deviation'))}" if fam == "FM" else None)
+            self._set("am", f"{r.get('am_djup', 0) * 100:.0f} %" if fam == "AM" else None)
+            self._set("ctcss", f"{r['ctcss']:.1f} Hz" if r.get("ctcss") else None)
+            self._set("skur", f"skurar ({r.get('duty', 0) * 100:.0f} % på)" if r.get("skurar") else "kontinuerlig")
+            self._set("env", f"{r.get('cv', 0):.2f}")
+            self._set("trafik", self.traffic(r))
+            vals = r.get("avk_varden") or []
+            for i, key in enumerate(("avk1", "avk2", "avk3")):
+                if i < len(vals):
+                    self._set(key, vals[i][1], vals[i][0])
+                else:
+                    self._set(key, None)
+            if r.get("symboler") and len(vals) < 3:
+                self._set(("avk1", "avk2", "avk3")[len(vals)], r["symboler"][-40:], "Symboler (senaste)")
+            k = r.get("kandidater") or []
+            lines = ["<b>Möjliga signaltyper</b>"]
+            if not k:
+                lines.append("<span alpha='60%'>ingen känd typ passar</span>")
+            for sc, e, why in k:
+                kat = e.get("kat", "")
+                colr = {"militär": "#ff7a5c", "myndighet": "#ffb547"}.get(kat, "#7fe0d0")
+                lines.append(f"<span foreground='{colr}'>●</span> <b>{GLib.markup_escape_text(e['namn'])}</b> "
+                             f"<span alpha='70%'>{sc:.0f} % · {GLib.markup_escape_text(kat)}</span>")
+            if k:
+                lines.append(f"<span size='small' alpha='75%'>{GLib.markup_escape_text(k[0][1].get('info', ''))}</span>")
+            self.kand.set_markup("\n".join(lines))
+
+        def copy(self):
+            r = self.last or {}
+            out = [f"Radiospanaren signalanalys {time.strftime('%Y-%m-%d %H:%M:%S')}"]
+            for key, title in self.ROWS:
+                l1, l2 = self.cells[key]
+                if l2.get_visible():
+                    out.append(f"{l1.get_text() or title}: {l2.get_text()}")
+            for sc, e, why in r.get("kandidater") or []:
+                out.append(f"Kandidat: {e['namn']} ({sc:.0f} %) {why}")
+            txt = self.textbuf.get_text(self.textbuf.get_start_iter(), self.textbuf.get_end_iter(), False)
+            if txt:
+                out.append("Klartext:\n" + txt[-2000:])
+            self.get_clipboard().set("\n".join(out))
+            self.win.toast("Analysen kopierad")
+
     class MainWindow(Adw.ApplicationWindow):
         def __init__(self, app, conf, args):
             super().__init__(application=app, title=APP_NAME)
@@ -2637,6 +3403,10 @@ def run_gui(args):
             for k in ("ACARS", "AIS", "APRS"):
                 self.hub.enabled[k] = bool(conf.get(k.lower(), False))
             e.decoders = self.hub
+            self.analyzer = analys.Analyzer(SR, os.path.join(CONF_DIR, "signaler.json"))
+            e.analyzer = self.analyzer
+            self.analyzer.start()
+            self.an_win = None
             e.center = self.wf_center
             e.offset = self.freq - e.center
 
@@ -2654,6 +3424,7 @@ def run_gui(args):
             right.set_start_child(self.view)
             right.set_end_child(self._build_bottom())
             right.set_position(int(h * 0.62))
+            self.right_paned = right
             outer.set_end_child(right)
             self.toasts.set_child(outer)
             tv.set_content(self.toasts)
@@ -2681,12 +3452,20 @@ def run_gui(args):
                 GLib.timeout_add(800, lambda: self._open_ship_map() or False)
             if args.flik:
                 GLib.idle_add(lambda: self.bottom_nb.set_current_page(
-                    ["signallogg", "bokmarken", "avkodat"].index(args.flik)) or False)
+                    ["signallogg", "bokmarken", "avkodat", "analys"].index(args.flik)) or False)
             if args.skarmbild:
                 path, secs = args.skarmbild[0], float(args.skarmbild[1])
                 GLib.timeout_add(int(secs * 1000), lambda: self.save_screenshot(path) and False)
             if args.skanna:
                 GLib.timeout_add(1500, lambda: (self.scanner.active or self._toggle_scan()) and False)
+            if getattr(args, "analysera", None):
+                fa = parse_freq(args.analysera)
+
+                def _start_analys():
+                    hit = self.carrier_at(fa, tol=5000)
+                    self.analyse(*(hit or (fa, DEFAULT_BW.get(self.engine.mode, 3000))))
+                    return False
+                GLib.timeout_add(2500, _start_analys)
 
         # ── delar av fönstret ──
         def _build_header(self):
@@ -2827,6 +3606,9 @@ def run_gui(args):
                                        "Ctrl + mushjul i vattenfallet")
             cmaps = list(COLORMAPS)
             self._combo(g, "Tema", ["Mörkt", "Ljust", "Följ systemet"], c.get("theme", 0), self._on_theme)
+            skins = list(SKINS)
+            self._combo(g, "Utseende", [SKINS[k]["namn"] for k in skins],
+                        skins.index(c.get("skin")) if c.get("skin") in skins else 0, self._on_skin)
             self._combo(g, "Färgskala", cmaps, cmaps.index(c["colormap"]) if c["colormap"] in cmaps else 0,
                         self._on_colormap)
             box.append(g)
@@ -3025,7 +3807,114 @@ def run_gui(args):
             v.append(sw)
             self.dec_tab_label = Gtk.Label(label="Avkodat")
             nb.append_page(v, self.dec_tab_label)
+
+            # Signalanalys
+            self.an_panel = AnalysPanel(self)
+            self.an_holder = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            self.an_holder.append(self.an_panel)
+            self.an_placeholder = Adw.StatusPage(title="Signalanalysen visas i ett eget fönster",
+                                                 icon_name="window-new-symbolic")
+            bb = Gtk.Button(label="Hämta tillbaka hit", halign=Gtk.Align.CENTER)
+            bb.add_css_class("pill")
+            bb.connect("clicked", lambda *_: self.toggle_analys_window())
+            self.an_placeholder.set_child(bb)
+            self.an_tab_label = Gtk.Label(label="Signalanalys")
+            self.an_page = nb.append_page(self.an_holder, self.an_tab_label)
             return nb
+
+        # ── signalanalys ──
+        def skin(self):
+            return SKINS.get(self.conf.get("skin", "spanare"), SKINS["spanare"])
+
+        def analys_shown(self):
+            return self.an_win is not None or self.bottom_nb.get_current_page() == self.an_page
+
+        def carrier_at(self, f, tol=None):
+            """Detekterad bärvåg (eller tydlig topp i spektrumet) nära f. Returnerar (mitt, bandbredd) eller None."""
+            lo, span = self.view.view()
+            hz_px = span / max(1, self.view.get_width())
+            tol = tol or max(hz_px * 6, 300)
+            best = None
+            for t in self.active_tracks:
+                if t["f"] - t["bw"] / 2 - tol <= f <= t["f"] + t["bw"] / 2 + tol:
+                    dd = abs(t["f"] - f)
+                    if best is None or dd < best[2]:
+                        best = (t["f"], max(t["bw"], 300.0), dd)
+            if best:
+                return best[0], best[1]
+            disp = self.view.disp
+            if disp is None:
+                return None
+            c = self.wf_center
+            binhz = self.view.wf_span / FFT_N
+            k = int((f - c) / binhz + FFT_N / 2)
+            r = max(2, int(tol / binhz))
+            k0, k1 = max(0, k - r), min(FFT_N, k + r + 1)
+            if k1 - k0 < 3:
+                return None
+            kp = k0 + int(np.argmax(disp[k0:k1]))
+            floor = float(np.median(disp))
+            pk = float(disp[kp])
+            if pk < floor + 8:
+                return None
+            thr = max(floor + 3, pk - 25)
+            a = kp
+            while a > 0 and disp[a - 1] > thr:
+                a -= 1
+            b = kp
+            while b < FFT_N - 1 and disp[b + 1] > thr:
+                b += 1
+            kk = np.arange(a, b + 1)
+            pw = 10 ** (disp[a:b + 1] / 10)
+            fcen = c + float(((kk - FFT_N / 2) * binhz * pw).sum() / pw.sum())
+            return fcen, max((b - a + 1) * binhz, 300.0)
+
+        def analyse(self, f, bw, show=True):
+            if self.an_panel.follow.get_active():
+                self.an_panel.follow.set_active(False)
+            self.an_panel.set_target(f, bw)
+            if show and self.an_win is None and self.bottom_nb.get_current_page() != self.an_page:
+                self.bottom_nb.set_current_page(self.an_page)
+            if show and self.an_win is None:
+                rp = self.right_paned
+                H = rp.get_height()
+                if H > 500 and H - rp.get_position() < 370:
+                    rp.set_position(H - 370)       # ge analysen plats
+            if not self.engine.running:
+                self.toast("Starta mottagningen för att analysera signalen")
+            self.view.queue_draw()
+
+        def toggle_analys_window(self):
+            p = self.an_panel
+            self.set_focus(None)
+            if self.an_win is not None:
+                self.an_win.set_focus(None)
+            if self.an_win is None:
+                self.an_holder.remove(p)
+                self.an_holder.append(self.an_placeholder)
+                win = Adw.Window(title="Signalanalys – Radiospanaren", transient_for=self,
+                                 default_width=self.conf.get("an_win", [760, 520])[0],
+                                 default_height=self.conf.get("an_win", [760, 520])[1])
+                tv = Adw.ToolbarView()
+                tv.add_top_bar(Adw.HeaderBar())
+                tv.set_content(p)
+                win.set_content(tv)
+                win.connect("close-request", lambda *_: self.toggle_analys_window() or True)
+                self.an_win = win
+                p.detach_btn.set_icon_name("view-restore-symbolic")
+                p.detach_btn.set_tooltip_text("Lägg tillbaka analysen som flik")
+                win.present()
+            else:
+                win = self.an_win
+                self.conf["an_win"] = [win.get_width(), win.get_height()]
+                win.get_content().set_content(None)
+                self.an_win = None
+                self.an_holder.remove(self.an_placeholder)
+                self.an_holder.append(p)
+                p.detach_btn.set_icon_name("window-new-symbolic")
+                p.detach_btn.set_tooltip_text("Visa analysen i ett eget fönster")
+                win.destroy()
+                self.bottom_nb.set_current_page(self.an_page)
 
         # ── frekvens / läge ──
         def step(self):
@@ -3311,6 +4200,15 @@ def run_gui(args):
         def _on_theme(self, i):
             self.conf["theme"] = i
             apply_theme(i)
+            apply_skin(self.conf.get("skin", "spanare"), i)
+
+        def _on_skin(self, i):
+            name = list(SKINS)[i]
+            self.conf["skin"] = name
+            apply_skin(name, self.conf.get("theme", 0))
+            self.view.queue_draw()
+            self.an_panel.mini.queue_draw()
+            self.an_panel.diag.queue_draw()
 
         def _on_det_enabled(self, v):
             self.conf["det_enabled"] = v
@@ -3815,7 +4713,8 @@ def run_gui(args):
             """Renderar fönstret till en PNG-fil (fungerar även under Wayland)."""
             try:
                 win = self
-                for w in (getattr(self, "activity_win", None), getattr(self, "ship_win", None)):
+                for w in (getattr(self, "activity_win", None), getattr(self, "ship_win", None),
+                          getattr(self, "an_win", None)):
                     if w is not None and w.get_visible():
                         win = w
                         break
@@ -3880,6 +4779,10 @@ def run_gui(args):
                 self.level_lbl.set_text(f"{e.level:6.1f} dB")
                 self.sq_lbl.set_text("● SIGNAL" if e.sq_open and e.squelch > -150 else "")
             self.scanner.tick()
+            try:
+                self.an_panel.tick()
+            except Exception:
+                log.exception("Fel vid uppdatering av signalanalysen")
             return True
 
         def _slow_tick(self):
@@ -3925,6 +4828,9 @@ def run_gui(args):
                 if self.ship_win is not None:
                     self.conf["ship_map_view"] = list(self.ship_win.mp.view())
                 save_conf(self.conf)
+                if self.an_win is not None:
+                    self.conf["an_win"] = [self.an_win.get_width(), self.an_win.get_height()]
+                self.analyzer.stop()
                 self.scanner.stop()
                 self.engine.stop()
                 self.audio.stop()
@@ -3944,6 +4850,23 @@ def run_gui(args):
     def apply_theme(i):
         schemes = [Adw.ColorScheme.FORCE_DARK, Adw.ColorScheme.FORCE_LIGHT, Adw.ColorScheme.DEFAULT]
         Adw.StyleManager.get_default().set_color_scheme(schemes[i if 0 <= i < 3 else 0])
+
+    _skin_css = {}
+
+    def apply_skin(name, theme):
+        """Laddar utseendets CSS. Färgerna i 'Spanare' gäller bara när programmet visas mörkt."""
+        disp = Gdk.Display.get_default()
+        old = _skin_css.pop("p", None)
+        if old is not None:
+            Gtk.StyleContext.remove_provider_for_display(disp, old)
+        css = SKIN_CSS.get(name, "")
+        dark = Adw.StyleManager.get_default().get_dark()
+        if name == "spanare" and not dark:
+            css = SKIN_CSS["klassisk"]
+        prov = Gtk.CssProvider()
+        prov.load_from_string(css)
+        Gtk.StyleContext.add_provider_for_display(disp, prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+        _skin_css["p"] = prov
 
     class App(Adw.Application):
         def __init__(self, args):
@@ -3978,6 +4901,10 @@ def run_gui(args):
                     log.error("Fel i %s: %s", CSS_FILE, ex)
             conf = load_conf()
             apply_theme(conf.get("theme", 0))
+            apply_skin(conf.get("skin", "spanare"), conf.get("theme", 0))
+            Adw.StyleManager.get_default().connect(
+                "notify::dark", lambda sm, _p: apply_skin(self.win.conf.get("skin", "spanare") if self.win else
+                                                          conf.get("skin", "spanare"), 0))
             a = self.args
             if a.source:
                 conf["source"] = a.source
@@ -4109,13 +5036,42 @@ def selftest(seconds=4.0):
     ax = avkodare.parse_ax25(fr[0]) if fr else None
     aprs_ok = bool(ax and ax["src"] == "SA0ABC-9" and avkodare.parse_aprs(ax)[0] == "Position")
     print(f"  APRS-avkodare: {'OK' if aprs_ok else 'FEL'}")
+    # Signalanalys: RTTY till klartext och igenkänning av ett militärt HF-modem
+    def tap_run(sig, off, bw, secs=3.5, dial=None):
+        an = analys.Analyzer(SR)
+        an.set_target(14.0e6 + off, bw)
+        L = len(sig)
+        rng3 = np.random.default_rng(3)
+        text, feat = "", None
+        for k in range(int(secs * SR / BLOCK)):
+            n = k * BLOCK + np.arange(BLOCK)
+            pos = n / (SR / 48000)
+            y = analys.loop_sample(sig, pos)
+            x = 0.05 * y * np.exp(2j * np.pi * off * n / SR) + 0.006 * (rng3.standard_normal(BLOCK) +
+                                                                         1j * rng3.standard_normal(BLOCK))
+            an.tap.feed(x.astype(np.complex64), 14.0e6)
+            if k % 8 == 7 and k * BLOCK > SR:
+                r = an.step(now=k * BLOCK / SR)
+                if r:
+                    feat, txt = r
+                    text += txt
+        ac = (14.0e6 + off + feat.get("f_mid", 0) - dial) if dial else None
+        return feat, text, analys.signaldb.match(feat, 14.0e6 + off, None, ac)
+    feat, text, _k = tap_run(analys.make_rtty(48000, 50, 450, "RYRY CQ DE SJALVTEST 73 " * 8), 20e3, 1000, secs=6)
+    rtty_ok = feat["fam"] == "FSK2" and "DE SJALVTEST" in text
+    print(f"  Signalanalys RTTY 50/450: {'OK' if rtty_ok else 'FEL'} ({feat['klass']}, {feat.get('baud') or 0:.1f} Bd, "
+          f"text {text.strip()[:40]!r})")
+    feat, _t, kand = tap_run(analys.make_psk(48000, 2400, 8, 8.0), 51800, 3000, dial=14.05e6)
+    psk_ok = feat["fam"] == "PSK8" and bool(kand) and kand[0][1]["namn"] in ("STANAG 4285", "MIL-STD-188-110A/B (seriell)")
+    print(f"  Signalanalys 8PSK 2400 Bd: {'OK' if psk_ok else 'FEL'} ({feat['klass']}, "
+          f"{kand[0][1]['namn'] if kand else 'ingen kandidat'})")
     try:
         import adsb
         adsb_ok = adsb.selftest(verbose=True)
     except Exception as ex:
         print(f"  ADS-B-avkodare: FEL ({ex})")
         adsb_ok = False
-    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok and adsb_ok
+    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok and adsb_ok and rtty_ok and psk_ok
     print("RESULTAT: " + ("OK" if ok else f"FEL {errors}"))
     log.info("Självtest: %s (%d block, %.1f ms/block)", "OK" if ok else "FEL", st["blocks"], st["proc_ms"])
     return 0 if ok else 1
@@ -4157,7 +5113,9 @@ def main():
     p.add_argument("--fartygskarta", action="store_true", help="öppna fartygskartan (AIS) direkt")
     p.add_argument("--aktivitetskarta", action="store_true", help="öppna aktivitetskartan direkt")
     p.add_argument("--kalibrera", action="store_true", help="öppna frekvenskalibreringen direkt")
-    p.add_argument("--flik", choices=["signallogg", "bokmarken", "avkodat"], help="flik att visa längst ner")
+    p.add_argument("--analysera", metavar="FREKVENS",
+                   help="analysera signalen på FREKVENS i fliken Signalanalys (t.ex. 99.77 eller 14074k)")
+    p.add_argument("--flik", choices=["signallogg", "bokmarken", "avkodat", "analys"], help="flik att visa längst ner")
     p.add_argument("--skarmbild", nargs=2, metavar=("FIL", "SEKUNDER"),
                    help="spara en skärmbild av fönstret (PNG) efter angivet antal sekunder")
     p.add_argument("--debug", action="store_true", help="detaljerad loggning, även i terminalen")

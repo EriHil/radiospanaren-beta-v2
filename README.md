@@ -29,6 +29,17 @@ Radiospanaren gör en billig RTL-SDR-dongel till en komplett mottagarstation med
 - Känner igen signaltyper på frekvensen: ACARS, VDL2, AIS, APRS, ADS-B, nödfrekvenserna 121,5 och 243,0 MHz, PMR446, FT8, vädersatelliter, UVB-76 och dongelns kristallövertoner.
 - Filter i stil med Wireshark: `freq>144 freq<146 bw<25k peak>-50 typ~NFM aktiv`. Export till CSV.
 
+**Signalanalys** (ny i 2.2)
+- Klicka på en bärvåg i vattenfallet, så visas den i fliken *Signalanalys* (eller i ett eget fönster). Där finns ett litet vattenfall som täcker kanalen och en ruta med mätvärdena: signaltyp, mittfrekvens, SNR, bandbredd, symboltakt, shift, antal toner, deviation, modulationsgrad, CTCSS och en bedömning av trafiken.
+- Modulationsigenkänning: bärvåg, CW/OOK, AM, FM, SSB, 2/4-FSK, MFSK, MSK, BPSK, QPSK, 8PSK, linjär PSK/QAM och parallelltonmodem/OFDM. Diagrammet byter efter typ: konstellation, frekvensfördelning, envelop eller tonspektrum.
+- Jämför med en signaldatabas (`signaldb.py`, egna tillägg i `~/.config/radiospanaren/signaler.json`), även militära datavågformer: STANAG 4285/4529/4539, MIL-STD-188-110, Link 11 CLEW/SLEW, ALE (MIL-STD-188-141), ANDVT, marinens FSK-sändningar. Igenkänningen gäller vågformen. Krypterad trafik kan identifieras men inte läsas.
+- Avkodar klartext direkt i analysen: RTTY (Baudot) och Morse. Fler avkodare kan läggas till som insticksmoduler i `analys.py`.
+
+![Signalanalys av RTTY i simulatorn](docs/bilder/signalanalys-rtty.png)
+
+**Utseende**
+- Nytt standardutseende, *Spanare*: mörk marin med bärnstensfärgade detaljer och en ny färgskala för vattenfallet. *Klassisk* finns kvar.
+
 **Avkodare** (egna implementationer, ingen extra programvara behövs)
 | Avkodare | Signal | Visar |
 |---|---|---|
