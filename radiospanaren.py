@@ -8,7 +8,7 @@ Radiospanaren – SDR-mottagare, radioskanner och signallogg för Fedora.
 Delar:
   1. Loggning och felrapport
   2. Konfiguration, bandplan, hjälpfunktioner
-  3. Mottagarkällor (RTL-SDR via librtlsdr, rtl_tcp, simulator)
+  3. Mottagarkällor (RTL-SDR via librtlsdr, rtl_tcp, KiwiSDR på nätet, simulator)
   4. DSP-motor (spektrum, demodulering, squelch, inspelning)
   5. Signaldetektor (signalloggen)
   6. Ljudutgång och webbgränssnitt
@@ -28,7 +28,7 @@ import threading
 
 APP_NAME = "Radiospanaren"
 APP_ID = "se.eh.Radiospanaren"
-VERSION = "2.4.0"
+VERSION = "2.4.1"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "radiospanaren")
@@ -195,6 +195,7 @@ try:
     import analys
     import analysavkodare
     import iqfil
+    import kiwisdr
 except ImportError as _e:  # pragma: no cover
     setup_logging()
     log.critical("Saknar Python-paket: %s. Installera med: sudo dnf install python3-numpy python3-scipy", _e)
@@ -218,8 +219,9 @@ STEPS = [0, 10, 100, 1000, 5000, 9000, 10000, 12500, 25000, 100000]
 STEP_NAMES = ["Auto", "10 Hz", "100 Hz", "1 kHz", "5 kHz", "9 kHz", "10 kHz", "12,5 kHz", "25 kHz", "100 kHz"]
 IQ_FORMATS = [("SigMF cu8 – 8 bitar, 3 MB/s", "sigmf_cu8"), ("SigMF cf32 – flyttal, 12 MB/s", "sigmf_cf32"),
               ("WAV 16 bitar (SDR++/SDR#), 6 MB/s", "wav16")]
-SOURCES = ["rtl", "tcp", "sim", "file"]
-SOURCE_NAMES = ["RTL-SDR (USB)", "rtl_tcp (nätverk)", "Simulator (test utan SDR)", "IQ-fil (uppspelning)"]
+SOURCES = ["rtl", "tcp", "kiwi", "sim", "file"]
+SOURCE_NAMES = ["RTL-SDR (USB)", "rtl_tcp (nätverk)", "KiwiSDR (webb-SDR på nätet)",
+                "Simulator (test utan SDR)", "IQ-fil (uppspelning)"]
 
 # Bandplan (MHz): från, till, namn
 BANDPLAN = [
@@ -255,7 +257,7 @@ DEFAULT_BOOKMARKS = [
 BOOKMARK_VERSION = 2
 
 DEFAULT_CONF = {
-    "source": "rtl", "tcp_addr": "127.0.0.1:1234", "auto_gain": True, "gain": 30.0, "ppm": 0,
+    "source": "rtl", "tcp_addr": "127.0.0.1:1234", "kiwi_addr": "", "auto_gain": True, "gain": 30.0, "ppm": 0,
     "direct": 0, "biast": False, "freq": 100.0e6, "mode": "WFM", "bw": None, "squelch": -150.0,
     "volume": 80, "step_idx": 0, "db_min": -100.0, "db_max": -20.0, "zoom": 1, "spec_frac": 0.35,
     "colormap": "spanare", "theme": 0, "skin": "spanare", "analys_bw_idx": 0, "analys_follow": False, "scan_mode": 0, "scan_start": "144.0", "scan_stop": "146.0",
@@ -528,6 +530,9 @@ class RtlSource(BaseSource):
         L.rtlsdr_set_agc_mode.argtypes = [vp, ctypes.c_int]
         L.rtlsdr_reset_buffer.argtypes = [vp]
         L.rtlsdr_read_sync.argtypes = [vp, ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        self._CB = ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint32, ctypes.c_void_p)
+        L.rtlsdr_read_async.argtypes = [vp, self._CB, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32]
+        L.rtlsdr_cancel_async.argtypes = [vp]
         self.has_biast = hasattr(L, "rtlsdr_set_bias_tee")
         if self.has_biast:
             L.rtlsdr_set_bias_tee.argtypes = [vp, ctypes.c_int]
@@ -547,10 +552,43 @@ class RtlSource(BaseSource):
         log.info("Öppnade RTL-SDR: %s", name.decode(errors="replace") if name else "?")
         L.rtlsdr_set_sample_rate(self.dev, self.rate)
         L.rtlsdr_set_center_freq(self.dev, int(self.center))
+        self.center_hw = float(self.center)
+        self.gen = 0
         self._apply(self._take())
         L.rtlsdr_reset_buffer(self.dev)
-        self.buf = (ctypes.c_ubyte * (self.block * 2))()
-        self.arr = np.ctypeslib.as_array(self.buf)
+        # Läs i en egen tråd med librtlsdr:s asynkrona läsning (12 köade USB-överföringar). Tidigare
+        # lästes dongeln synkront i DSP-tråden, och allt som kom medan ett block bearbetades gick
+        # förlorat (≈ 20 % av samplen vid 10 ms bearbetning per block).
+        self.q = queue.Queue(maxsize=int(2.0 * self.rate * 2 / self.CHUNK))      # ca 2 s
+        self.gen = 0                  # ökas vid omstämning – äldre data kastas
+        self._skip_gen = -1
+        self.dropped = 0
+        self.err = None
+        self.pend = []
+        self.pend_n = 0
+        self._cb = self._CB(self._on_chunk)
+        self.reader = threading.Thread(target=self._reader, name="RTL-läsare", daemon=True)
+        self.reader.start()
+
+    CHUNK = 65536                     # byte per USB-överföring (21 ms vid 1,536 MS/s)
+
+    def _reader(self):
+        r = self.lib.rtlsdr_read_async(self.dev, self._cb, None, 12, self.CHUNK)
+        if r < 0 and self.dev is not None:
+            self.err = r
+            log.error("RTL-SDR slutade leverera data (felkod %d)", r)
+
+    def _on_chunk(self, buf, n, _ctx):
+        try:
+            a = np.ctypeslib.as_array(buf, shape=(n,)).copy()
+            try:
+                self.q.put_nowait((self.gen, self.center_hw, a))
+            except queue.Full:
+                self.dropped += 1
+                if self.dropped % 50 == 1:
+                    log.warning("RTL-SDR: DSP hinner inte med – %d USB-block kastade", self.dropped)
+        except Exception:           # undantag får aldrig gå tillbaka in i C
+            pass
 
     def _apply(self, p):
         L, d = self.lib, self.dev
@@ -561,6 +599,8 @@ class RtlSource(BaseSource):
             r = L.rtlsdr_set_center_freq(d, int(p["freq"]))
             if r < 0:
                 log.warning("RTL-SDR kunde inte ställa in %.3f MHz (felkod %d)", p["freq"] / 1e6, r)
+            self.center_hw = float(p["freq"])
+            self.gen += 1
         if "gain" in p:
             g = p["gain"]
             if g is None:
@@ -577,18 +617,40 @@ class RtlSource(BaseSource):
         p = self._take()
         if p:
             self._apply(p)
-        n = ctypes.c_int(0)
-        r = self.lib.rtlsdr_read_sync(self.dev, self.buf, self.block * 2, ctypes.byref(n))
-        if r < 0:
-            raise SourceError(f"Läsfel från RTL-SDR (felkod {r}). Drogs dongeln ur?")
-        if n.value < self.block * 2:
-            return None
-        return LUT_U8[self.arr].view(np.complex64), self.center, self.arr
+        need = self.block * 2
+        while self.pend_n < need:
+            try:
+                g, c, a = self.q.get(timeout=1.5)
+            except queue.Empty:
+                if self.err is not None or not self.reader.is_alive():
+                    raise SourceError(f"Läsfel från RTL-SDR (felkod {self.err}). Drogs dongeln ur?")
+                log.warning("RTL-SDR: ingen data på 1,5 s")
+                return None
+            if g != self.gen:
+                continue                          # från före omstämningen
+            if self._skip_gen != g:               # första överföringen efter omstämning: delvis gammal
+                self._skip_gen = g
+                if g:
+                    self.pend, self.pend_n = [], 0
+                    continue
+            self.pend.append(a)
+            self.pend_n += len(a)
+            self.pend_c = c
+        allb = np.concatenate(self.pend) if len(self.pend) > 1 else self.pend[0]
+        arr, rest = allb[:need], allb[need:]
+        self.pend = [rest] if len(rest) else []
+        self.pend_n = len(rest)
+        return LUT_U8[arr].view(np.complex64), self.pend_c, arr
 
     def close(self):
         if self.dev:
-            self.lib.rtlsdr_close(self.dev)
-            self.dev = None
+            d, self.dev = self.dev, None
+            self.lib.rtlsdr_cancel_async(d)
+            if getattr(self, "reader", None):
+                self.reader.join(timeout=3)
+            self.lib.rtlsdr_close(d)
+            if getattr(self, "dropped", 0):
+                log.info("RTL-SDR: %d USB-block kastades totalt (DSP hann inte med)", self.dropped)
             log.info("Stängde RTL-SDR")
 
 
@@ -843,8 +905,34 @@ def open_iq_reader(conf):
         raise SourceError(f"Kunde inte läsa IQ-filen {os.path.basename(path)}: {ex}")
 
 
+class KiwiSource(kiwisdr.KiwiSource):
+    """KiwiSDR-källan med programmets felklass (SourceError visas som meddelande)."""
+
+    def open(self):
+        try:
+            super().open()
+        except kiwisdr.KiwiError as e:
+            raise SourceError(str(e))
+
+    def read(self):
+        try:
+            return super().read()
+        except kiwisdr.KiwiError as e:
+            raise SourceError(str(e))
+
+
 def make_source(conf):
     k = conf["source"]
+    if k == "kiwi":
+        a = conf.get("kiwi_addr", "").strip()
+        if not a:
+            raise SourceError("Ange KiwiSDR:ns adress först (Mottagare → KiwiSDR-adress), "
+                              "t.ex. http://sk5sm.proxy.kiwisdr.com:8073/")
+        try:
+            kiwisdr.parse_addr(a)
+        except kiwisdr.KiwiError as e:
+            raise SourceError(str(e))
+        return KiwiSource(a, SR, BLOCK)
     if k == "rtl":
         return RtlSource()
     if k == "tcp":
@@ -1172,8 +1260,17 @@ class Engine:
         p = np.fft.fftshift((np.abs(np.fft.fft(seg, axis=1)) ** 2).mean(axis=0)) / self.win_norm
         db = (10 * np.log10(p + 1e-20)).astype(np.float32)
         self.spec_q.append((db, c, self._zoom_line(x, c)))
+        # uppspelning snabbare än realtid: vänta in avkodarna och analysen i stället för att kasta data
+        bp = getattr(self.source, "fixed_center", False) and getattr(self.source, "speed", 1.0) != 1.0
         if self.decoders is not None:
-            self.decoders.feed(x, c)
+            self.decoders.feed(x, c, wait=bp)
+        if bp and self.analyzer is not None:
+            an, tap = self.analyzer, self.analyzer.tap
+            t_end = time.monotonic() + 3.0
+            while (self.running and tap.ring is not None and tap.target is not None and not an.paused
+                   and an._thr is not None and tap.total - an._ptr > 0.6 * len(tap.ring)
+                   and time.monotonic() < t_end):
+                time.sleep(0.01)
         if self.analyzer is not None:
             try:
                 self.analyzer.tap.feed(x, c)
@@ -1787,6 +1884,8 @@ def run_gui(args):
             if z <= 1:
                 return 1, None
             span = SR / z
+            if w.engine.running and isinstance(w.engine.source, KiwiSource):
+                return z, c                                  # Kiwins band ligger alltid mitt i
             return z, float(np.clip(w.freq, c - SR / 2 + span / 2, c + SR / 2 - span / 2))
 
         def x_to_f(self, x):
@@ -1818,7 +1917,7 @@ def run_gui(args):
             state = ctrl.get_current_event_state()
             if state & Gdk.ModifierType.CONTROL_MASK:
                 z = self.win.conf["zoom"]
-                z = min(32, z * 2) if dy < 0 else max(1, z // 2)
+                z = min(128, z * 2) if dy < 0 else max(1, z // 2)
                 self.win.set_zoom(z)
             else:
                 st = self.win.step()
@@ -2078,7 +2177,13 @@ def run_gui(args):
 
         def receivable(self, f):
             """Direktsampling tar bara emot under 28,8 MHz; tunern (R820T m.fl.) bara över ca 24 MHz."""
+            if self._kiwi():
+                return f <= kiwisdr.KIWI_MAX_HZ
             return f < 28.8e6 if self.win.conf.get("direct") else f >= 24e6
+
+        def _kiwi(self):
+            e = self.win.engine
+            return e.running and isinstance(e.source, KiwiSource)
 
         def locked(self, f):
             e = self.win.engine
@@ -2104,13 +2209,18 @@ def run_gui(args):
                               if not self.locked(b["freq"]) and self.receivable(b["freq"])]
                 if not self.items:
                     w.toast("Inga bokmärken går att ta emot i nuvarande läge"
-                            + (" (direktsampling = bara under 28,8 MHz)" if conf.get("direct") else ""))
+                            + (" (KiwiSDR = bara 0–30 MHz)" if self._kiwi() else
+                               " (direktsampling = bara under 28,8 MHz)" if conf.get("direct") else ""))
                     return False
                 self.idx = -1
                 self.active = True
                 self._next_bm(time.monotonic())
                 desc = f"bokmärken ({len(self.items)} st)"
             else:
+                if self._kiwi():
+                    w.toast("Intervallskanning fungerar inte med KiwiSDR (bara 12 kHz i taget) – "
+                            "skanna bokmärken i stället")
+                    return False
                 try:
                     a = parse_freq(conf["scan_start"])
                     b = parse_freq(conf["scan_stop"])
@@ -2168,7 +2278,8 @@ def run_gui(args):
             self.idx = (self.idx + 1) % len(self.items)
             bm = self.items[self.idx]
             self.win.tune(bm["freq"], bm.get("mode"))
-            self._listen(now, self.dwell)
+            # KiwiSDR: omstämningen går över nätet – vänta in de nya samplen
+            self._listen(now, self.dwell + (0.5 if self._kiwi() else 0.0))
             self.status = f"Skannar: {bm['name']}"
 
         def _next_span(self, now):
@@ -3804,6 +3915,15 @@ def run_gui(args):
             self.tcp_row.set_show_apply_button(True)
             self.tcp_row.connect("apply", lambda r: self._set_conf("tcp_addr", r.get_text().strip()))
             g.add(self.tcp_row)
+            self.kiwi_row = Adw.EntryRow(title="KiwiSDR-adress (klistra in webbadressen)")
+            self.kiwi_row.set_text(c.get("kiwi_addr", ""))
+            self.kiwi_row.set_show_apply_button(True)
+            self.kiwi_row.set_tooltip_text("Adressen du surfar in på, t.ex. http://sk5sm.proxy.kiwisdr.com:8073/\n"
+                                           "Lista: www.receiverbook.de/map eller rx.kiwisdr.com\n"
+                                           "Lösenord (om Kiwin kräver det): lösen@värd:port\n"
+                                           "Kiwin ger ca 12 kHz I/Q i taget, 0–30 MHz.")
+            self.kiwi_row.connect("apply", lambda r: self._set_conf("kiwi_addr", r.get_text().strip()))
+            g.add(self.kiwi_row)
             self.hw_rows = [self._switch(g, "Automatisk förstärkning", c["auto_gain"], self._on_auto_gain)]
             self.gain_row = self._spin(g, "Förstärkning (dB)", 0, 49.6, 0.5, c["gain"], 1, self._on_gain)
             self.gain_row.set_sensitive(not c["auto_gain"])
@@ -3862,7 +3982,7 @@ def run_gui(args):
             self.dbmax_row = self._spin(g, "Max nivå (dB)", -150, 20, 1, c["db_max"], 0,
                                         lambda v: self._set_conf("db_max", v))
             self._button(g, "Automatisk nivå", self.auto_level)
-            self.zoom_row = self._spin(g, "Zoom", 1, 32, 1, c["zoom"], 0, lambda v: self.set_zoom(int(v)),
+            self.zoom_row = self._spin(g, "Zoom", 1, 128, 1, c["zoom"], 0, lambda v: self.set_zoom(int(v)),
                                        "Ctrl + mushjul i vattenfallet")
             cmaps = list(COLORMAPS)
             self._combo(g, "Tema", ["Mörkt", "Ljust", "Följ systemet"], c.get("theme", 0), self._on_theme)
@@ -4187,8 +4307,12 @@ def run_gui(args):
             e = self.engine
             freq = float(max(1e4, freq))
             playing = e.running and getattr(e.source, "fixed_center", False)
-            if playing:
-                pass                                         # uppspelning: direktsampling spelar ingen roll
+            kiwi = e.running and isinstance(e.source, KiwiSource)
+            if kiwi and freq > kiwisdr.KIWI_MAX_HZ:
+                self.toast("KiwiSDR tar bara emot 0–30 MHz")
+                return
+            if playing or kiwi or self.conf.get("source") == "kiwi":
+                pass                                         # uppspelning/Kiwi: direktsampling spelar ingen roll
             elif self.conf.get("direct") and freq > 28.8e6 >= self.freq:
                 self.toast("Direktsampling är på – den tar bara emot under 28,8 MHz. Stäng av den för VHF/UHF.")
             elif not self.conf.get("direct") and freq < 24e6 <= self.freq:
@@ -4204,6 +4328,14 @@ def run_gui(args):
                     freq = e.center + math.copysign(SR * 0.48, d)
                     d = freq - e.center
                 ok_offset = True
+            if kiwi:
+                # Kiwin skickar bara ca 12 kHz runt mitten: flytta mitten (Kiwin stämmer om) när
+                # signalen inte längre får plats i bandet
+                ok_offset = abs(d) + e.bw / 2 <= e.source.narrow_rate * 0.42
+                if not ok_offset:
+                    e.set_center(freq)
+                    d = 0.0
+                    ok_offset = True
             if not (ok_offset or keep_center):
                 newc = freq + SR * 0.15
                 e.set_center(newc)
@@ -4223,6 +4355,9 @@ def run_gui(args):
             e.set_center(c)
             c = e.center                                     # oförändrad vid uppspelning
             d = self.freq - c
+            if e.running and isinstance(e.source, KiwiSource) and abs(d) > e.source.narrow_rate * 0.45:
+                self.freq = c
+                d = 0.0
             if abs(d) > SR * 0.45:
                 self.freq = c + math.copysign(SR * 0.45, d)
                 d = self.freq - c
@@ -4308,8 +4443,10 @@ def run_gui(args):
         def _show_source_rows(self, src):
             self.play_group.set_visible(src == "file")
             self.tcp_row.set_visible(src == "tcp")
-            for r in self.hw_rows:
-                r.set_visible(src != "file")
+            self.kiwi_row.set_visible(src == "kiwi")
+            for i, r in enumerate(self.hw_rows):
+                # KiwiSDR: bara förstärkningen (Kiwins AGC eller fast) går att styra
+                r.set_visible(src != "file" and (src != "kiwi" or i < 2))
 
         # ── uppspelning av IQ-fil ──
         def _playing(self):
@@ -4693,6 +4830,19 @@ def run_gui(args):
                     src.set("direct", self.conf["direct"])
                 if self.conf["biast"]:
                     src.set("biast", True)
+                if isinstance(src, KiwiSource):
+                    if self.freq > kiwisdr.KIWI_MAX_HZ:
+                        self.toast("KiwiSDR tar bara emot 0–30 MHz – stämde till 7,100 MHz")
+                        self.freq = 7.1e6
+                        self.conf["freq"] = self.freq
+                    e.center = self.freq
+                    src.set("freq", e.center)
+                    e.offset = 0.0
+                    e.reset_squelch()
+                    self._update_freq_label()
+                    self._zoom_before_kiwi = self.conf["zoom"]
+                    if self.conf["zoom"] < 64:
+                        self.set_zoom(64)                  # visa Kiwins smala band (ca 12 kHz av 1,5 MHz)
                 if isinstance(src, iqfil.FileSource):
                     fc = src.center
                     e.center = fc
@@ -4712,8 +4862,13 @@ def run_gui(args):
                 btn.add_css_class("destructive-action")
             else:
                 self.scanner.stop()
+                was_kiwi = isinstance(e.source, KiwiSource)
                 e.stop()
                 self.audio.stop()
+                zb = getattr(self, "_zoom_before_kiwi", None)
+                if was_kiwi and zb is not None:
+                    self._zoom_before_kiwi = None
+                    self.set_zoom(zb)
                 btn.set_label("▶ Starta")
                 btn.remove_css_class("destructive-action")
                 btn.add_css_class("suggested-action")
@@ -5051,8 +5206,8 @@ def run_gui(args):
                 if src in ("rtl",):
                     self.btn_start.set_active(False)       # släpp dongeln
                     self.toast("Mottagningen stoppad – Flygradar använder dongeln")
-            if src == "file":
-                src = "rtl"                                # Flygradar spelar inte upp IQ-filer
+            if src in ("file", "kiwi"):
+                src = "rtl"                                # Flygradar: inte IQ-filer, Kiwi saknar 1090 MHz
             cmd = [sys.executable, path, "--kalla", src, "--start"]
             if src == "tcp":
                 cmd += ["--tcp", self.conf["tcp_addr"]]
@@ -5407,6 +5562,9 @@ def run_gui(args):
             if a.tcp:
                 conf["tcp_addr"] = a.tcp
                 conf["source"] = "tcp"
+            if a.kiwi:
+                conf["kiwi_addr"] = a.kiwi
+                conf["source"] = "kiwi"
             if a.freq:
                 conf["freq"] = parse_freq(a.freq)
             if a.mode:
@@ -5636,6 +5794,11 @@ def selftest(seconds=4.0):
         print(f"  Analysavkodare {name}: {'OK' if good else 'FEL'} ({feat['klass'] if feat else '–'})")
     iq_ok = selftest_iq()
     try:
+        iq_ok &= kiwisdr.selftest(SR, BLOCK)
+    except Exception as ex:
+        print(f"  KiwiSDR: FEL ({ex})")
+        iq_ok = False
+    try:
         import adsb
         adsb_ok = adsb.selftest(verbose=True)
     except Exception as ex:
@@ -5661,9 +5824,11 @@ def main():
     p.add_argument("--sokvagar", action="store_true", help="visa var program, inställningar och loggar ligger")
     p.add_argument("--sjalvtest", action="store_true", help="testa signalbehandlingen med simulatorn (utan fönster)")
     p.add_argument("--aterstall", action="store_true", help="återställ alla inställningar till standard")
-    p.add_argument("--kalla", dest="source", choices=SOURCES, help="mottagarkälla: rtl, tcp, sim eller file (IQ-fil, se --spela)")
+    p.add_argument("--kalla", dest="source", choices=SOURCES, help="mottagarkälla: rtl, tcp, kiwi, sim eller file (IQ-fil, se --spela)")
     p.add_argument("--simulator", action="store_true", help="samma som --kalla sim")
     p.add_argument("--tcp", metavar="VÄRD:PORT", help="anslut till en rtl_tcp-server")
+    p.add_argument("--kiwi", metavar="ADRESS", help="hämta I/Q från en KiwiSDR på nätet, "
+                   "t.ex. http://sk5sm.proxy.kiwisdr.com:8073/ (0–30 MHz, ca 12 kHz bandbredd)")
     p.add_argument("--frekvens", dest="freq", metavar="FREKV", help="startfrekvens, t.ex. 145.5 eller 7074k")
     p.add_argument("--mod", dest="mode", type=str.upper, choices=MODES, help="modulering")
     p.add_argument("--start", action="store_true", help="börja ta emot direkt")

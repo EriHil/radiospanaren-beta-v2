@@ -511,6 +511,9 @@ def parse_ais(payload, ships=None):
     if len(bits) < 38:
         return None
     t = _u(bits, 0, 6)
+    # rimlighetskontroll utöver CRC: typ 1–27, och positionsrapporterna har fast längd (168 bitar)
+    if not 1 <= t <= 27 or (t in (1, 2, 3, 18) and len(bits) != 168):
+        return None
     mmsi = _u(bits, 8, 30)
     m = {"type": "AIS", "src": str(mmsi), "name": "", "kind": AIS_TYPES.get(t, f"Meddelandetyp {t}"),
          "pos": None, "text": "", "details": [("MMSI", str(mmsi)), ("Meddelandetyp", f"{t} – "
@@ -873,11 +876,15 @@ class DecoderHub:
     def any_enabled(self):
         return any(self.enabled.values())
 
-    def feed(self, x, c):
+    def feed(self, x, c, wait=False):
+        """wait=True (uppspelning snabbare än realtid): vänta på avkodartråden i stället för att kasta."""
         if not self.any_enabled():
             return
         try:
-            self.q.put_nowait((x, c))
+            if wait:
+                self.q.put((x, c), timeout=5.0)
+            else:
+                self.q.put_nowait((x, c))
         except queue.Full:
             self.dropped += 1
 

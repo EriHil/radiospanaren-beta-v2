@@ -1,5 +1,5 @@
 ══════════════════════════════════════════════════════════════════════
-  RADIOSPANAREN – MANUAL                                   version 2.4.0
+  RADIOSPANAREN – MANUAL                                   version 2.4.1
   SDR-mottagare, radioskanner och signallogg för Fedora
 ══════════════════════════════════════════════════════════════════════
 
@@ -22,7 +22,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   radiospanaren                     Starta med senaste inställningar
   radiospanaren --start             Starta och börja ta emot direkt
   radiospanaren --simulator         Använd simulatorn (testa utan SDR)
-  radiospanaren --kalla rtl         Välj källa: rtl, tcp, sim eller file (IQ-fil)
+  radiospanaren --kalla rtl         Välj källa: rtl, tcp, kiwi, sim eller file (IQ-fil)
   radiospanaren --spela FIL         Spela upp en IQ-fil som mottagare (SigMF, WAV,
                                     .cu8, .cs8, .cs16, .cf32/.cfile)
   --takt 2048000 --mittfrekvens 145.5
@@ -30,6 +30,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
                                     saknar dem (annars tas de ur filnamnet)
   radiospanaren --tcp 192.168.1.20:1234
                                     Anslut till en rtl_tcp-server
+  radiospanaren --kiwi http://sk5sm.proxy.kiwisdr.com:8073/ --frekvens 7074k
+                                    Hämta I/Q från en KiwiSDR på nätet
   radiospanaren --frekvens 145.5    Startfrekvens (MHz om ingen enhet)
   radiospanaren --frekvens 7074k    ... med enhet: Hz, k, M, G
   radiospanaren --mod NFM           Modulering: WFM NFM AM USB LSB CW
@@ -347,6 +349,26 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
       (baseband_<frekvens>Hz_<tid>_<datum>.wav). Vid omstämning börjar en
       ny fil.
   Filerna hamnar i ~/Musik/Radiospanaren (eller ~/Radiospanaren).
+
+ KiwiSDR (webb-SDR på nätet)
+  KiwiSDR är kortvågsmottagare (0–30 MHz) som folk ställer ut på nätet och
+  som man kan surfa in på. Radiospanaren kan hämta I/Q direkt från en sådan,
+  så att vattenfall, demodulering, avkodare, Signalanalys och inspelning
+  fungerar som med en egen dongel – med Kiwins antenn, var den än står.
+  Välj Källa → "KiwiSDR (webb-SDR på nätet)", klistra in webbadressen (t.ex.
+  http://sk5sm.proxy.kiwisdr.com:8073/), tryck ✓ och sedan ▶ Starta.
+  Hitta Kiwis: www.receiverbook.de/map eller rx.kiwisdr.com.
+  Lösenordsskyddad Kiwi: skriv lösen@värd:port.
+  Bra att veta:
+   • En Kiwi skickar bara ca 12 kHz I/Q åt gången (20 kHz på vissa). Zoomen
+     sätts därför till 64 när du startar. Stämmer du utanför bandet stämmer
+     Kiwin om (det tar en bråkdel av en sekund över nätet).
+   • Utanför Kiwins band visas brus på Kiwins egen nivå (inte riktiga signaler).
+   • Automatisk förstärkning = Kiwins AGC; annars fast förstärkning i dB.
+   • Varje Kiwi har bara 4–8 kanaler som delas med alla besökare, och många
+     har tidsgräns. "Fullt upptagen" = prova en annan Kiwi.
+   • Intervallskanning går inte (för smalt band); bokmärkesskanning fungerar.
+   • Flygradar (1090 MHz) använder alltid den egna dongeln.
 
  Uppspelning av IQ-fil
   Välj Källa → "IQ-fil (uppspelning)", tryck "Välj …" och sedan ▶ Starta.
