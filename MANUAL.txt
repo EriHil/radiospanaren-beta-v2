@@ -1,5 +1,5 @@
 ══════════════════════════════════════════════════════════════════════
-  RADIOSPANAREN – MANUAL                                   version 2.6.0
+  RADIOSPANAREN – MANUAL                                   version 2.7.0
   SDR-mottagare, radioskanner och signallogg för Fedora
 ══════════════════════════════════════════════════════════════════════
 
@@ -65,7 +65,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
 
   Flaggorna kan kombineras, t.ex.:
     radiospanaren --frekvens 121.5 --mod AM --start
-    radiospanaren --mod AM --skanna intervall --intervall 225-400 --kanalsteg 25 --squelch -15
+    radiospanaren --mod AM --skanna intervall --intervall 225-400 --kanalsteg 25 --snr 8
+                                    (--snr = dB över brusgolvet; --squelch = använd squelch-reglaget)
     radiospanaren --frekvens 131.725 --mod AM --acars --start
     radiospanaren --frekvens 161.975 --mod NFM --ais --start --flik avkodat
     radiospanaren --frekvens 161.975 --mod NFM --ais --start --fartygskarta
@@ -142,17 +143,45 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
 
  Squelch
   Ställ squelch strax över brusnivån (se nivåmätaren i titelraden).
-  -150 = alltid öppen. Skannern och automatisk inspelning kräver squelch.
+  -150 = alltid öppen. Automatisk inspelning kräver squelch. Skannern har
+  ett eget läge som mäter mot brusgolvet (se nedan) och behöver det inte.
 
  Skanner (sidopanelen)
-  Bokmärken ........... går igenom alla bokmärken och stannar där
-                        squelch öppnar
+  Bokmärken ........... går igenom bokmärkena. Alla bokmärken inom samma
+                        1,2 MHz kontrolleras SAMTIDIGT med en enda omstämning
+                        (t.ex. 2 m-, PMR- eller flygkanaler), så det går
+                        mycket fortare än ett i taget.
+  Bokmärken att skanna  alla, eller bara en grupp (bandet bokmärket ligger i,
+                        t.ex. Flyg, Marin VHF, PMR446)
   Frekvensintervall ... söker igenom start–stopp med valt kanalsteg.
-                        Ett helt fönster (ca 1,2 MHz) analyseras på en
-                        gång, så skanningen går snabbt.
+  Band (förval) ....... fyller i start, stopp, kanalsteg och modulering för
+                        flyg (25 och 8,33 kHz), militärflyg, marin VHF, 2 m,
+                        70 cm, PMR446, LPD433, jakt/fritid 155 MHz och 27 MHz
+  Stanna när .......... "Signalen är X dB över bruset" (standard): brusgolvet
+                        mäts i varje fönster, så samma inställning (t.ex.
+                        10 dB) fungerar på alla band utan att ändra squelch.
+                        Ljudet är tyst medan skannern letar. Eller
+                        "Squelch-reglaget öppnar" som tidigare.
+  Tid per fönster ..... hur länge varje fönster mäts. Toppvärdet under hela
+                        tiden används, så även korta skurar (AIS, ACARS,
+                        datapaket) fångas om de hörs under mättiden.
   Väntetid ............ hur länge den stannar efter att signalen försvunnit
   Max lyssningstid .... lämnar sändare som aldrig tystnar (0 = av)
-  ⏭ Hoppa över ........ (titelraden) spärrar frekvensen och går vidare
+  Prioritetskanal ..... ett bokmärke som kollas hela tiden och tar över när
+                        det hörs (★ i träfflistan). Ligger det i samma fönster
+                        som det skannern lyssnar på kollas det utan avbrott,
+                        annars med en kort utflykt var "Kolla prioritet var"
+                        sekund. Lämnas den efter maxtid eller "Hoppa över"
+                        vilar den 10 s.
+  ⏭ Hoppa över ........ (titelraden) hoppar över frekvensen resten av
+                        sessionen. Meddelandet har knappen "Spärra för alltid".
+  Spärrade frekvenser … visar spärrade frekvenser (permanenta, denna session
+                        och hittade störningar) – ta bort en och en.
+  Fliken "Skanner" .... träfflista: frekvens, namn/band, antal träffar, total
+                        tid, senast hörd och starkaste SNR. Dubbelklicka för
+                        att lyssna. "Lägg till som bokmärke", "Spärra",
+                        "Exportera CSV". Bra för att hitta vilka kanaler som
+                        används: kör intervallskanning en stund och titta här.
   Hoppa över omodulerade bärvågor
                         Dongeln och datorn skapar egna "störningar" (konstanta
                         bärvågor, t.ex. 120,000 / 230,400 / 259,200 / 264,000 MHz).

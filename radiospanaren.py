@@ -25,10 +25,11 @@ import logging
 import logging.handlers
 import traceback
 import threading
+import atexit
 
 APP_NAME = "Radiospanaren"
 APP_ID = "se.eh.Radiospanaren"
-VERSION = "2.6.0"
+VERSION = "2.7.0"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "radiospanaren")
@@ -221,6 +222,21 @@ DEFAULT_BW = {"WFM": 180000, "NFM": 12500, "AM": 8000, "USB": 2700, "LSB": 2700,
 DEFAULT_STEP = {"WFM": 100000, "NFM": 12500, "AM": 5000, "USB": 100, "LSB": 100, "CW": 10}
 STEPS = [0, 10, 100, 1000, 5000, 9000, 10000, 12500, 25000, 100000]
 STEP_NAMES = ["Auto", "10 Hz", "100 Hz", "1 kHz", "5 kHz", "9 kHz", "10 kHz", "12,5 kHz", "25 kHz", "100 kHz"]
+# Förval för intervallskanning: namn, start, stopp (MHz), kanalsteg (kHz), modulering
+SCAN_PRESETS = [
+    ("Eget intervall", None, None, None, None),
+    ("Flyg 118–137 MHz (AM, 25 kHz)", "118.0", "136.975", 25.0, "AM"),
+    ("Flyg 118–137 MHz (AM, 8,33 kHz)", "118.0", "136.99167", 25.0 / 3, "AM"),
+    ("Militärflyg 225–400 MHz (AM)", "225.0", "399.975", 25.0, "AM"),
+    ("Marin VHF 156–162 MHz (NFM)", "156.0", "162.025", 25.0, "NFM"),
+    ("2 m amatör 144–146 MHz (NFM)", "144.0", "146.0", 12.5, "NFM"),
+    ("70 cm amatör 432–438 MHz (NFM)", "432.0", "438.0", 12.5, "NFM"),
+    ("PMR446 (NFM, 16 kanaler)", "446.00625", "446.19375", 12.5, "NFM"),
+    ("LPD433 (NFM)", "433.075", "434.775", 25.0, "NFM"),
+    ("Jakt/fritid 155,4 MHz (NFM)", "155.400", "155.525", 25.0, "NFM"),
+    ("27 MHz PR/CB (NFM)", "26.965", "27.405", 10.0, "NFM"),
+]
+
 IQ_FORMATS = [("SigMF cu8 – 8 bitar, 3 MB/s", "sigmf_cu8"), ("SigMF cf32 – flyttal, 12 MB/s", "sigmf_cf32"),
               ("WAV 16 bitar (SDR++/SDR#), 6 MB/s", "wav16")]
 SOURCES = ["rtl", "tcp", "kiwi", "sim", "file"]
@@ -265,6 +281,7 @@ DEFAULT_CONF = {
     "direct": 0, "biast": False, "freq": 100.0e6, "mode": "WFM", "bw": None, "squelch": -150.0,
     "volume": 80, "step_idx": 0, "db_min": -100.0, "db_max": -20.0, "zoom": 1, "spec_frac": 0.35,
     "colormap": "spanare", "theme": 0, "skin": "spanare", "analys_bw_idx": 0, "analys_follow": False, "scan_mode": 0, "scan_start": "144.0", "scan_stop": "146.0",
+    "scan_sq_mode": 0, "scan_snr": 10.0, "scan_prio": None, "scan_prio_s": 2.0, "scan_group": "", "scan_preset": 0,
     "scan_step_khz": 12.5, "scan_hold": 2.0, "scan_max_listen": 0.0, "scan_dwell_ms": 300, "det_thresh": 12.0,
     "det_enabled": True, "auto_rec": False, "web_enabled": False, "web_port": 8073,
     "web_public": False, "iq_format": 0, "play_file": "", "play_speed": 0, "play_loop": False,
@@ -573,6 +590,7 @@ class RtlSource(BaseSource):
         self._cb = self._CB(self._on_chunk)
         self.reader = threading.Thread(target=self._reader, name="RTL-läsare", daemon=True)
         self.reader.start()
+        atexit.register(self.close)          # processen avslutas utan stopp: avbryt USB-läsningen ändå
 
     CHUNK = 65536                     # byte per USB-överföring (21 ms vid 1,536 MS/s)
 
@@ -656,6 +674,10 @@ class RtlSource(BaseSource):
             if getattr(self, "dropped", 0):
                 log.info("RTL-SDR: %d USB-block kastades totalt (DSP hann inte med)", self.dropped)
             log.info("Stängde RTL-SDR")
+            try:
+                atexit.unregister(self.close)
+            except Exception:
+                pass
 
 
 class TcpSource(BaseSource):
@@ -1000,6 +1022,10 @@ class Engine:
         self.avg_center = None
         self.avg_count = 0
         self.avg_lock = threading.Lock()
+        self.peak_lin = None         # toppvärde sedan reset_peak() – skannern fångar korta skurar
+        self.peak_center = None
+        self.peak_count = 0
+        self._peak_reset = True
         self.stats = {"blocks": 0, "proc_ms": 0.0, "overruns": 0}
         self._filt_key = None
         self._ph = 0.0
@@ -1047,6 +1073,17 @@ class Engine:
         with self.sink_lock:
             if s in self.sinks:
                 self.sinks.remove(s)
+
+    def reset_peak(self):
+        with self.avg_lock:
+            self._peak_reset = True
+            self.peak_count = 0
+
+    def get_peak(self):
+        with self.avg_lock:
+            if self.peak_lin is None or self._peak_reset:
+                return None, None, 0
+            return self.peak_lin.copy(), self.peak_center, self.peak_count
 
     def get_avg(self):
         with self.avg_lock:
@@ -1290,6 +1327,14 @@ class Engine:
                 self.avg_lin = self.avg_lin * 0.6 + p * 0.4
                 self.avg_count += 1
             avg = self.avg_lin
+            if self._peak_reset or self.peak_center != c or self.peak_lin is None:
+                self.peak_lin = p.copy()
+                self.peak_center = c
+                self.peak_count = 1
+                self._peak_reset = False
+            else:
+                np.maximum(self.peak_lin, p, out=self.peak_lin)
+                self.peak_count += 1
 
         mode, bw, off = self.mode, self.bw, self.offset
         off = float(np.clip(off, -SR / 2 + 5000, SR / 2 - 5000))
@@ -2172,54 +2217,121 @@ def run_gui(args):
 
     # ── Skanner ──
     class Scanner:
+        """Skanner för bokmärken och frekvensintervall.
+
+        Dongeln ser hela fönstret (±0,4·SR) på en gång, så alla kanaler i ett fönster mäts
+        samtidigt ur det medelvärdesbildade spektrumet – en omstämning per fönster i stället
+        för en per kanal. Tröskeln är antingen relativ till brusgolvet (median av spektrumet i
+        fönstret) eller det vanliga squelch-reglaget. Prioritetskanalen kollas utan avbrott om
+        den ligger i samma fönster, annars med en kort utflykt med jämna mellanrum.
+        KiwiSDR (12 kHz) skannas en kanal i taget; en IQ-fil som ett enda fönster.
+        """
+        HALF = 0.4                  # använd ±0,4·SR av fönstret
+        GUARD = 3 * BIN_HZ          # håll kanaler borta från DC-spiken
+
         def __init__(self, win):
             self.win = win
             self.active = False
             self.state = "idle"
             self.status = ""
             self.force_skip = False
+            self.hits = {}           # nyckel (10 Hz) → träff
+            self.hits_gen = 0        # ökar när träfflistan ändrats
+            self.temp_lock = []      # spärrat denna session ("Hoppa över")
+            self.prio = None
+
+        # ── vad går att ta emot / är spärrat ──
+        def _src(self):
+            e = self.win.engine
+            return e.source if e.running else None
+
+        def _kiwi(self):
+            return isinstance(self._src(), KiwiSource)
+
+        def _file(self):
+            return getattr(self._src(), "fixed_center", False)
 
         def receivable(self, f):
             """Direktsampling tar bara emot under 28,8 MHz; tunern (R820T m.fl.) bara över ca 24 MHz."""
             if self._kiwi():
                 return f <= kiwisdr.KIWI_MAX_HZ
+            if self._file():
+                s = self._src()
+                return abs(f - s.center) < 0.45 * min(SR, s.r.rate or SR)
             return f < 28.8e6 if self.win.conf.get("direct") else f >= 24e6
 
-        def _kiwi(self):
+        def locked(self, f, mode=None, bw=None):
             e = self.win.engine
-            return e.running and isinstance(e.source, KiwiSource)
+            lo, hi = e._chan_bounds(mode or e.mode, bw or e.bw, f)
+            return any(lo - 500 <= x <= hi + 500
+                       for x in self.win.conf.get("lockout", []) + self.temp_lock + self.win.suggested)
 
-        def locked(self, f):
+        # ── mätning ──
+        @staticmethod
+        def _floor(avg):
+            n = FFT_N // 2
+            k = int(FFT_N * 0.4)
+            return float(np.median(np.concatenate((avg[n - k:n - 8], avg[n + 8:n + k])))) + 1e-20
+
+        def _measure(self, avg, avg_c, ch, floor):
+            """(nivå dB, SNR dB) för kanalen ch = {f, mode, bw} ur spektrumet."""
             e = self.win.engine
-            lo, hi = e._chan_bounds(e.mode, e.bw, f)
-            return any(lo - 500 <= x <= hi + 500 for x in self.win.conf.get("lockout", []) + self.win.suggested)
+            lo, hi = e._chan_bounds(ch["mode"], ch["bw"], ch["f"] - avg_c)
+            k0 = int(np.clip(np.floor(lo / BIN_HZ + FFT_N / 2), 0, FFT_N - 1))
+            k1 = int(np.clip(np.ceil(hi / BIN_HZ + FFT_N / 2), k0 + 1, FFT_N))
+            p = 10 * math.log10(float(avg[k0:k1].sum()) + 1e-20)
+            return p, p - 10 * math.log10(floor * (k1 - k0))
 
+        def _active(self, lvl, snr):
+            if self.rel:
+                return snr >= self.thr
+            return lvl >= self.win.engine.squelch
+
+        def _sq_for(self, ch, floor):
+            """Relativ tröskel: sätt motorns squelch till brusgolv + tröskel för den här kanalen."""
+            if not self.rel:
+                return
+            e = self.win.engine
+            lo, hi = e._chan_bounds(ch["mode"], ch["bw"], 0)
+            nb = max(1, int(math.ceil((hi - lo) / BIN_HZ)))
+            e.squelch = 10 * math.log10(floor * nb) + self.thr - 1.5
+
+        # ── start/stopp ──
         def start(self):
             w = self.win
             conf = w.conf
-            if not w.engine.running:
+            e = w.engine
+            if not e.running:
                 w.toast("Starta mottagningen först")
                 return False
             self.mode = conf["scan_mode"]
             self.hold = float(conf["scan_hold"])
             self.max_listen = float(conf.get("scan_max_listen", 0) or 0)
-            self.dwell = conf["scan_dwell_ms"] / 1000.0
+            self.dwell = conf["scan_dwell_ms"] / 1000.0 + (0.5 if self._kiwi() else 0.0)
+            self.need = max(3, int(conf["scan_dwell_ms"] / 1000.0 / (BLOCK / SR)))   # block att toppvärdeshålla
+            self.rel = conf.get("scan_sq_mode", 0) == 0
+            self.thr = float(conf.get("scan_snr", 10.0))
+            self.user_sq = e.squelch
+            self.skip_carriers = conf.get("scan_skip_carriers", True)
             self.stops = 0
             self.t0 = time.monotonic()
-            self.skip_carriers = conf.get("scan_skip_carriers", True)
             self.force_skip = False
+            self.prio = self._prio_channel()
+            self.prio_every = float(conf.get("scan_prio_s", 2.0))
+            self.prio_next = time.monotonic() + self.prio_every
+            self.prio_quiet = 0.0           # vila prioriteten till (efter maxtid/överhoppning)
             if self.mode == 0:
-                self.items = [b for b in conf["bookmarks"]
-                              if not self.locked(b["freq"]) and self.receivable(b["freq"])]
-                if not self.items:
-                    w.toast("Inga bokmärken går att ta emot i nuvarande läge"
+                grp = conf.get("scan_group", "")
+                items = [b for b in conf["bookmarks"] if not grp or (band_name(b["freq"]) or "Övrigt") == grp]
+                chans = [self._ch(b["freq"], b.get("mode") or e.mode, b.get("name", "")) for b in items]
+                chans = [c for c in chans if self.receivable(c["f"]) and not self.locked(c["f"], c["mode"], c["bw"])]
+                if not chans:
+                    w.toast("Inga bokmärken att skanna" + (f" i gruppen {grp}" if grp else "") + " i nuvarande läge"
                             + (" (KiwiSDR = bara 0–30 MHz)" if self._kiwi() else
                                " (direktsampling = bara under 28,8 MHz)" if conf.get("direct") else ""))
                     return False
-                self.idx = -1
-                self.active = True
-                self._next_bm(time.monotonic())
-                desc = f"bokmärken ({len(self.items)} st)"
+                self.windows = self._plan(chans)
+                desc = f"bokmärken ({len(chans)} st i {len(self.windows)} fönster)"
             else:
                 if self._kiwi():
                     w.toast("Intervallskanning fungerar inte med KiwiSDR (bara 12 kHz i taget) – "
@@ -2228,83 +2340,218 @@ def run_gui(args):
                 try:
                     a = parse_freq(conf["scan_start"])
                     b = parse_freq(conf["scan_stop"])
-                except ValueError as e:
-                    w.toast(str(e))
+                except ValueError as ex:
+                    w.toast(str(ex))
                     return False
                 if b <= a:
                     w.toast("Stoppfrekvensen måste vara högre än startfrekvensen")
                     return False
                 self.a, self.b = a, b
                 self.chstep = max(100.0, float(conf["scan_step_khz"]) * 1000)
-                usable = SR * 0.8
-                self.spans = []
-                cc = a + usable / 2 + self.chstep / 2
-                while cc - usable / 2 < b:
-                    self.spans.append(cc)
-                    cc += usable
-                self.span_idx = -1
-                self.active = True
-                self._next_span(time.monotonic())
+                if self._file():
+                    self.windows = [{"c": None, "range": (a, b)}]
+                else:
+                    usable = SR * 2 * self.HALF
+                    self.windows = []
+                    cc = a + usable / 2 + self.chstep / 2
+                    while cc - usable / 2 < b:
+                        self.windows.append({"c": cc, "range": (max(a, cc - usable / 2), min(b, cc + usable / 2))})
+                        cc += usable
                 desc = (f"intervall {fmt_mhz(a)}–{fmt_mhz(b)} MHz, steg {fmt_bw(self.chstep)}, "
-                        f"{len(self.spans)} fönster")
-            if w.engine.squelch <= -140:
+                        f"{len(self.windows)} fönster")
+            self.win_idx = -1
+            self.active = True
+            self._next_window(time.monotonic())
+            if not self.rel and e.squelch <= -140:
                 w.toast("Tips: höj squelch så att bruset inte stoppar skanningen")
-            log.info("Skanning startad: %s, %s, squelch %.0f dB, väntetid %.1f s",
-                     desc, w.engine.mode, w.engine.squelch, self.hold)
+            log.info("Skanning startad: %s, %s, tröskel %s, väntetid %.1f s%s", desc, e.mode,
+                     f"{self.thr:.0f} dB över brus" if self.rel else f"squelch {e.squelch:.0f} dB", self.hold,
+                     f", prioritet {self.prio['name']} {fmt_mhz(self.prio['f'])} MHz" if self.prio else "")
             return True
 
         def stop(self):
             if self.active:
                 log.info("Skanning stoppad efter %.0f s, %d stopp på signaler",
                          time.monotonic() - self.t0, self.stops)
+                self._end_hit(time.monotonic())
+                if self.rel:
+                    self.win.engine.squelch = self.user_sq
             self.active = False
             self.state = "idle"
             self.status = ""
 
-        def skip(self):
-            """Spärra aktuell frekvens och gå vidare."""
-            f = self.win.freq
-            lst = self.win.conf.setdefault("lockout", [])
-            lst.append(f)
-            log.info("Skanner: spärrade %.4f MHz (%d spärrade totalt)", f / 1e6, len(lst))
-            self.win.toast(f"{fmt_mhz(f)} MHz spärrad – skannern hoppar över den")
-            if self.mode == 0:
-                self.items = [b for b in self.items if not self.locked(b["freq"])] or self.items
-            self.force_skip = True
+        def _ch(self, f, mode, name=""):
+            return {"f": float(f), "mode": mode, "bw": DEFAULT_BW.get(mode, 12500), "name": name}
 
-        def _listen(self, now, settle):
+        def _prio_channel(self):
+            p = self.win.conf.get("scan_prio")
+            if not p:
+                return None
+            for b in self.win.conf["bookmarks"]:
+                if abs(b["freq"] - p) < 1:
+                    if not self.receivable(b["freq"]):
+                        return None
+                    return self._ch(b["freq"], b.get("mode") or self.win.engine.mode, b.get("name", ""))
+            return None
+
+        def _plan(self, chans):
+            """Dela upp kanalerna i fönster. KiwiSDR: en i taget. IQ-fil: ett enda fönster."""
+            if self._kiwi():
+                return [{"c": None, "chans": [c], "tune": c} for c in sorted(chans, key=lambda c: c["f"])]
+            if self._file():
+                return [{"c": None, "chans": chans}]
+            return scan_plan(chans, SR, self.HALF, self.GUARD)
+
+        # ── fönster och kanaler ──
+        def _next_window(self, now):
+            self.win_idx = (self.win_idx + 1) % len(self.windows)
+            self._enter_window(now)
+
+        def _enter_window(self, now):
+            wd = self.windows[self.win_idx]
+            e = self.win.engine
+            if wd.get("tune"):                          # KiwiSDR: stäm in kanalen direkt
+                ch = wd["tune"]
+                self.win.tune(ch["f"], ch["mode"])
+            elif wd["c"] is not None:
+                e.set_center(wd["c"])
+                # visa fönstrets första kanal (ljudet är tyst medan fönstret mäts)
+                first = wd["chans"][0] if wd.get("chans") else self._ch(wd["range"][0], e.mode)
+                if first["mode"] != e.mode:
+                    self.win.set_mode(first["mode"])
+                self.win.tune(first["f"], keep_center=True)
+            self.expect_c = e.center
+            self.visited = set()
+            self.state = "window"
+            self._mute()
+            self.settle = now + 0.12 + (0.5 if self._kiwi() else 0.0)   # hårdvaran byter frekvens
+            self._reset_at = self.settle
+            if self.mode == 0:
+                names = [ch["name"] or fmt_mhz(ch["f"]) for ch in wd["chans"]]
+                self.status = "Skannar: " + (", ".join(names[:3]) + (f" +{len(names) - 3}" if len(names) > 3 else ""))
+            else:
+                lo, hi = wd["range"]
+                self.status = f"Skannar {fmt_mhz(lo)}–{fmt_mhz(hi)} MHz"
+
+        def _range_chans(self, wd, avg, avg_c, floor):
+            """Intervall: kanalrastret i fönstret, bara lokala toppar (inte sidband från grannen)."""
+            e = self.win.engine
+            sel_lo, sel_hi = wd["range"]
+            k = max(1, int(math.ceil(e.bw / 2 / self.chstep)))
+            lo = max(self.a, sel_lo - k * self.chstep, avg_c - SR * 0.48)
+            hi = min(self.b, sel_hi + k * self.chstep, avg_c + SR * 0.48)
+            first = math.ceil((lo - self.a) / self.chstep - 1e-9)
+            last = math.floor((hi - self.a) / self.chstep + 1e-9)
+            fs = self.a + np.arange(first, last + 1) * self.chstep
+            fs = fs[np.abs(fs - avg_c) > e.bw / 2 + self.GUARD]
+            chs = [dict(self._ch(f, e.mode), bw=e.bw) for f in fs]
+            ms = [self._measure(avg, avg_c, ch, floor) for ch in chs]
+            out = []
+            for i, ch in enumerate(chs):
+                if not (sel_lo <= ch["f"] <= sel_hi):
+                    continue
+                nb = [m[0] for m in ms[max(0, i - k):i + k + 1]]
+                if ms[i][0] < max(nb):
+                    continue
+                out.append((ch, ms[i][0], ms[i][1]))
+            return out
+
+        def _candidates(self, wd, avg, avg_c, floor):
+            if self.mode == 0:
+                res = [(ch, *self._measure(avg, avg_c, ch, floor)) for ch in wd["chans"]]
+            else:
+                res = self._range_chans(wd, avg, avg_c, floor)
+            return [(ch, lvl, snr) for ch, lvl, snr in res
+                    if self._active(lvl, snr) and int(ch["f"]) not in self.visited
+                    and not self.locked(ch["f"], ch["mode"], ch["bw"])]
+
+        def _listen_on(self, ch, now, floor, settle=0.15, is_prio=False, snr=None):
+            w = self.win
+            e = w.engine
+            if ch["mode"] != e.mode:
+                w.set_mode(ch["mode"])
+            w.tune(ch["f"], keep_center=not self._kiwi())
+            self._sq_for(ch, floor)
+            self.cur = ch
+            self.cur_prio = is_prio
+            self.floor = floor
             self.state = "listen"
             self.settle = now + settle
             self.hold_until = self.settle
             self.heard = False
+            self.status = ("Prioritet: " if is_prio else "Kollar: ") + (ch["name"] or fmt_mhz(ch["f"]) + " MHz")
+            self._start_hit(now, snr)
 
-        def _next_bm(self, now):
-            self.idx = (self.idx + 1) % len(self.items)
-            bm = self.items[self.idx]
-            self.win.tune(bm["freq"], bm.get("mode"))
-            # KiwiSDR: omstämningen går över nätet – vänta in de nya samplen
-            self._listen(now, self.dwell + (0.5 if self._kiwi() else 0.0))
-            self.status = f"Skannar: {bm['name']}"
-
-        def _next_span(self, now):
-            self.span_idx = (self.span_idx + 1) % len(self.spans)
-            c = self.spans[self.span_idx]
-            self.win.engine.set_center(c)
-            self.span_c = c
-            self.visited = set()
-            self.state = "span"
-            self.settle = now + self.dwell
-            self.status = f"Skannar {fmt_mhz(max(self.a, c - SR * 0.4))}–{fmt_mhz(min(self.b, c + SR * 0.4))} MHz"
-
-        def _leave(self, now):
+        def _leave(self, now, forced=False):
+            """forced: maxtid eller överhoppning – lämna även om signalen finns kvar."""
+            self._end_hit(now)
+            if forced and getattr(self, "cur_prio", False):
+                self.prio_quiet = now + max(10.0, 5 * self.prio_every)
             if self.heard:
                 log.info("Skanner: lämnar %.4f MHz efter %.1f s", self.win.freq / 1e6, now - self.heard_t)
-            if self.mode == 0:
-                self._next_bm(now)
-            else:
-                self.state = "span"      # fortsätt med nästa signal i samma fönster
-                self.settle = now + 0.05
+            self.visited.add(int(self.cur["f"]))
+            if abs(self.win.engine.center - self.expect_c) > 1:      # var på prioritetsutflykt
+                self._enter_window(now)
+                return
+            self.state = "window"            # mät fönstret igen – fler aktiva kanaler?
+            self.settle = now + 0.05
+            self._reset_at = self.settle
+            self._mute()
 
+        def _mute(self):
+            """Relativt läge: tyst medan fönstret mäts (squelch sätts per kanal när en hittas)."""
+            if self.rel:
+                self.win.engine.squelch = 99.0
+
+        # ── träfflista ──
+        def _start_hit(self, now, snr):
+            ch = self.cur
+            k = int(round(ch["f"] / 10))
+            h = self.hits.get(k)
+            if h is None:
+                h = self.hits[k] = {"f": ch["f"], "freq": ch["f"], "namn": ch["name"] or band_name(ch["f"]),
+                                    "mode": ch["mode"], "count": 0, "dur": 0.0, "first": time.time(),
+                                    "last": time.time(), "max_snr": -99.0, "prio": False}
+            h["count"] += 1
+            h["last"] = time.time()
+            h["prio"] = h["prio"] or self.cur_prio
+            if snr is not None:
+                h["max_snr"] = max(h["max_snr"], snr)
+            self._hit, self._hit_t = h, now
+            self.hits_gen += 1
+
+        def _end_hit(self, now):
+            h = getattr(self, "_hit", None)
+            if h is not None:
+                h["dur"] += now - self._hit_t
+                h["last"] = time.time()
+                self._hit = None
+                self.hits_gen += 1
+
+        def clear_hits(self):
+            self.hits.clear()
+            self.hits_gen += 1
+
+        # ── spärrar ──
+        def skip(self):
+            """Hoppa över aktuell frekvens resten av sessionen (permanent spärr via knappen i meddelandet)."""
+            f = self.win.freq
+            self.temp_lock.append(f)
+            log.info("Skanner: hoppar över %.4f MHz denna session", f / 1e6)
+            self.win.toast_action(f"{fmt_mhz(f)} MHz hoppas över denna session", "Spärra för alltid",
+                                  lambda: self.lock_forever(f))
+            self.force_skip = True
+
+        def lock_forever(self, f):
+            lst = self.win.conf.setdefault("lockout", [])
+            if all(abs(f - x) > 1 for x in lst):
+                lst.append(f)
+            self.temp_lock = [x for x in self.temp_lock if abs(x - f) > 1]
+            log.info("Skanner: spärrade %.4f MHz (%d spärrade totalt)", f / 1e6, len(lst))
+            save_conf(self.win.conf)
+            self.win.toast(f"{fmt_mhz(f)} MHz spärrad")
+
+        # ── huvudloop (anropas var 33:e ms) ──
         def tick(self):
             if not self.active:
                 return
@@ -2313,76 +2560,146 @@ def run_gui(args):
             if self.force_skip:
                 self.force_skip = False
                 if self.state == "listen":
-                    self._leave(now)
+                    self._leave(now, forced=True)
                 return
             if now < self.settle:
                 return
+            if getattr(self, "_reset_at", None) is not None:
+                e.reset_peak()
+                self._reset_at = None
+                return
+            avg, avg_c, cnt = e.get_avg()
             if self.state == "listen":
-                if e.sq_open:
-                    if not self.heard:
-                        self.heard = True
-                        self.heard_t = now
-                        self.stops += 1
-                        log.info("Skanner: signal på %.4f MHz (%s), nivå %.1f dB", self.win.freq / 1e6,
-                                 e.mode, e.level)
-                        self.status = "Lyssnar: " + fmt_mhz(self.win.freq) + " MHz"
-                    if (self.skip_carriers and e.mode in ("AM", "NFM") and e.activity is not None
-                            and e.activity < 3.0 and now - self.heard_t > 2.5):
-                        f = self.win.freq
-                        log.info("Skanner: %.4f MHz är en omodulerad bärvåg (ljudvariation %.1f dB) – "
-                                 "troligen störning, hoppar över", f / 1e6, e.activity)
-                        if all(abs(f - x) > 500 for x in self.win.suggested):
-                            self.win.suggested.append(f)
-                        self._leave(now)
+                self._tick_listen(now, e, avg, avg_c, cnt)
+            elif self.state == "window":
+                # toppvärde under hela väntetiden: en skur i ett enda block (43 ms) räcker
+                pk, pk_c, pn = e.get_peak()
+                if pk is None or abs(pk_c - self.expect_c) > 1 or pn < self.need:
+                    return
+                floor = self._floor(pk)
+                wd = self.windows[self.win_idx]
+                cands = self._candidates(wd, pk, pk_c, floor)
+                if self._prio_ok(now) and self._prio_in(pk_c):
+                    lvl, snr = self._measure(pk, pk_c, self.prio, floor)
+                    if self._active(lvl, snr):
+                        self._listen_on(self.prio, now, self._floor(avg) if avg is not None else floor,
+                                        snr=snr, is_prio=True)
                         return
-                    if self.max_listen > 0 and now - self.heard_t > self.max_listen:
-                        log.info("Skanner: maxtid %.0f s nådd på %.4f MHz, fortsätter",
-                                 self.max_listen, self.win.freq / 1e6)
-                        self._leave(now)
-                        return
-                    self.hold_until = now + self.hold
+                if cands:
+                    ch, lvl, snr = max(cands, key=lambda t: t[2] if self.rel else t[1])
+                    self._listen_on(ch, now, self._floor(avg) if avg is not None and abs(avg_c - pk_c) <= 1
+                                    else floor, snr=snr)
                     return
-                if now < self.hold_until:
+                if self._prio_due(now, avg_c):
                     return
-                self._leave(now)
-            elif self.state == "span":
-                avg, c, cnt = e.get_avg()
-                if avg is None or c != self.span_c or cnt < 4:
+                self._next_window(now)
+            elif self.state == "prio":
+                pk, pk_c, pn = e.get_peak()
+                if pk is None or abs(pk_c - e.center) > 1 or pn < self.need:
                     return
-                # Fönstren täcker c ± 0,4·SR utan glapp. Jämförelsen med grannkanaler går
-                # en bit utanför, så att en kanal i kanten inte väljs om grannen är starkare.
-                k = max(1, int(math.ceil(e.bw / 2 / self.chstep)))
-                sel_lo = max(self.a, c - SR * 0.4)
-                sel_hi = min(self.b, c + SR * 0.4)
-                lo = max(self.a, sel_lo - k * self.chstep, c - SR * 0.48)
-                hi = min(self.b, sel_hi + k * self.chstep, c + SR * 0.48)
-                first = math.ceil((lo - self.a) / self.chstep - 1e-9)
-                last = math.floor((hi - self.a) / self.chstep + 1e-9)
-                chans = self.a + np.arange(first, last + 1) * self.chstep
-                chans = chans[np.abs(chans - c) > e.bw / 2 + 3 * BIN_HZ]
-                pws = np.array([e.chan_power(avg, *e._chan_bounds(e.mode, e.bw, f - c)) for f in chans])
-                # Bara lokala toppar: grannkanaler inom bandbredden som är svagare är
-                # sidband/läckage från samma sändare och ska inte räknas som egna signaler.
-                best_f, best_p = None, -1e9
-                for i, f in enumerate(chans):
-                    pw = pws[i]
-                    if not (sel_lo <= f <= sel_hi):
-                        continue
-                    if pw < e.squelch or int(f) in self.visited or self.locked(f):
-                        continue
-                    if pw < pws[max(0, i - k):i + k + 1].max():
-                        continue
-                    if pw > best_p:
-                        best_f, best_p = f, pw
-                if best_f is not None:
-                    self.visited.add(int(best_f))
-                    self.win.tune(best_f, keep_center=True)
-                    self._listen(now, 0.2)
-                    self.status = "Kollar: " + fmt_mhz(best_f) + " MHz"
+                floor = self._floor(pk)
+                lvl, snr = self._measure(pk, pk_c, self.prio, floor)
+                if self._active(lvl, snr):
+                    log.info("Skanner: prioritetskanalen %s är aktiv", fmt_mhz(self.prio["f"]))
+                    self._listen_on(self.prio, now, self._floor(avg) if avg is not None else floor,
+                                    snr=snr, is_prio=True)
+                    self.visited.discard(int(self.prio["f"]))
                 else:
-                    self._next_span(now)
+                    self._return_from_prio(now)
 
-    # ── Fartygskarta (AIS) ──
+        def _tick_listen(self, now, e, avg, avg_c, cnt):
+            if e.sq_open:
+                if not self.heard:
+                    self.heard = True
+                    self.heard_t = now
+                    self.stops += 1
+                    log.info("Skanner: signal på %.4f MHz (%s), nivå %.1f dB%s", self.win.freq / 1e6,
+                             e.mode, e.level, " (prioritet)" if self.cur_prio else "")
+                    self.status = ("Prioritet: " if self.cur_prio else "Lyssnar: ") + \
+                        (self.cur["name"] + " " if self.cur["name"] else "") + fmt_mhz(self.win.freq) + " MHz"
+                if (self.skip_carriers and e.mode in ("AM", "NFM") and e.activity is not None
+                        and e.activity < 3.0 and now - self.heard_t > 2.5):
+                    f = self.win.freq
+                    log.info("Skanner: %.4f MHz är en omodulerad bärvåg (ljudvariation %.1f dB) – "
+                             "troligen störning, hoppar över", f / 1e6, e.activity)
+                    if all(abs(f - x) > 500 for x in self.win.suggested):
+                        self.win.suggested.append(f)
+                    self._leave(now, forced=True)
+                    return
+                if self.max_listen > 0 and now - self.heard_t > self.max_listen:
+                    log.info("Skanner: maxtid %.0f s nådd på %.4f MHz, fortsätter",
+                             self.max_listen, self.win.freq / 1e6)
+                    self._leave(now, forced=True)
+                    return
+                # prioritet i samma fönster: byt direkt om den blir aktiv (utan att stämma om)
+                if (not self.cur_prio and self._prio_ok(now) and avg is not None and abs(avg_c - e.center) <= 1
+                        and self._prio_in(avg_c) and cnt >= 2):
+                    lvl, snr = self._measure(avg, avg_c, self.prio, self._floor(avg))
+                    if self._active(lvl, snr):
+                        log.info("Skanner: prioritetskanalen blev aktiv – byter")
+                        self._end_hit(now)
+                        self._listen_on(self.prio, now, self._floor(avg), is_prio=True, snr=snr)
+                        return
+                self.hold_until = now + self.hold
+                if not self.cur_prio:
+                    self._prio_due(now, avg_c)
+                return
+            if now < self.hold_until:
+                return
+            self._leave(now)
+
+        # ── prioritetskanal ──
+        def _prio_ok(self, now):
+            p = self.prio
+            return (p is not None and now >= self.prio_quiet and int(p["f"]) not in self.visited
+                    and not self.locked(p["f"], p["mode"], p["bw"]))
+
+        def _prio_in(self, avg_c):
+            p = self.prio
+            if not p or avg_c is None or self._kiwi():
+                return False
+            d = abs(p["f"] - avg_c)
+            return d <= SR * 0.45 and d > p["bw"] / 2 + self.GUARD
+
+        def _prio_due(self, now, avg_c):
+            """Utflykt till prioritetskanalen om den ligger utanför fönstret och det är dags."""
+            if not self._prio_ok(now) or now < self.prio_next or self._file():
+                return False
+            self.prio_next = now + self.prio_every
+            if self._prio_in(avg_c):
+                return False
+            self._back = (self.state, getattr(self, "cur", None), self.win.freq, self.win.engine.mode,
+                          getattr(self, "hold_until", 0), getattr(self, "heard", False))
+            self._end_hit(now)
+            w = self.win
+            if self.prio["mode"] != w.engine.mode:
+                w.set_mode(self.prio["mode"])
+            w.tune(self.prio["f"])
+            self.state = "prio"
+            self.settle = now + 0.12 + (0.5 if self._kiwi() else 0.0)
+            self._reset_at = self.settle
+            self._mute()
+            return True
+
+        def _return_from_prio(self, now):
+            st, cur, f, mode, hold_until, heard = self._back
+            w = self.win
+            if st == "listen" and cur is not None:
+                if mode != w.engine.mode:
+                    w.set_mode(mode)
+                w.engine.set_center(self.expect_c) if not self._kiwi() else None
+                w.tune(f, keep_center=not self._kiwi())
+                self.cur = cur
+                self.cur_prio = False
+                self._sq_for(cur, self.floor)
+                self.state = "listen"
+                self.settle = now + self.dwell
+                self.hold_until = max(hold_until, self.settle + self.hold)
+                self.heard = False
+            else:
+                self._enter_window(now)
+
+    # ── Webbmottagare ──
     class WebRxWindow(Adw.Window):
         """Lista över webbmottagare (KiwiSDR, OpenWebRX, WebSDR) – välj en KiwiSDR som källa."""
         MAX_ROWS = 300
@@ -2680,6 +2997,7 @@ def run_gui(args):
         def toast(self, msg):
             self.toasts.add_toast(Adw.Toast.new(msg))
 
+    # ── Fartygskarta (AIS) ──
     class ShipWindow(Adw.Window):
         MAX_AGE = 30 * 60          # fartyg försvinner efter 30 min utan meddelanden
 
@@ -4095,7 +4413,7 @@ def run_gui(args):
                 GLib.timeout_add(800, lambda: self._open_webrx() or False)
             if args.flik:
                 GLib.idle_add(lambda: self.bottom_nb.set_current_page(
-                    ["signallogg", "bokmarken", "avkodat", "analys"].index(args.flik)) or False)
+                    ["signallogg", "bokmarken", "skanner", "avkodat", "analys"].index(args.flik)) or False)
             if args.skarmbild:
                 path, secs = args.skarmbild[0], float(args.skarmbild[1])
                 GLib.timeout_add(int(secs * 1000), lambda: self.save_screenshot(path) and False)
@@ -4301,21 +4619,43 @@ def run_gui(args):
             box.append(g)
 
             g = self._section("Skanner")
-            self._combo(g, "Skanna", ["Bokmärken", "Frekvensintervall"], c["scan_mode"],
-                        lambda i: self._set_conf("scan_mode", i))
+            self._combo(g, "Skanna", ["Bokmärken", "Frekvensintervall"], c["scan_mode"], self._on_scan_mode)
+            self.scan_group_row = Adw.ComboRow(title="Bokmärken att skanna")
+            self.scan_group_row.connect("notify::selected", lambda r, _p: self._on_scan_group(r.get_selected()))
+            g.add(self.scan_group_row)
+            self.scan_preset_row = self._combo(g, "Band (förval)", [p[0] for p in SCAN_PRESETS],
+                                               min(c.get("scan_preset", 0), len(SCAN_PRESETS) - 1), self._on_scan_preset)
+            self.scan_range_rows = [self.scan_preset_row]
+            self.scan_entries = {}
             for key, title in (("scan_start", "Start (MHz)"), ("scan_stop", "Stopp (MHz)")):
                 r = Adw.EntryRow(title=title)
                 r.set_text(str(c[key]))
                 r.connect("changed", lambda row, key=key: self._set_conf(key, row.get_text()))
                 g.add(r)
-            self._spin(g, "Kanalsteg (kHz)", 0.1, 1000, 0.5, c["scan_step_khz"], 2,
-                       lambda v: self._set_conf("scan_step_khz", v))
+                self.scan_entries[key] = r
+                self.scan_range_rows.append(r)
+            self.scan_step_row = self._spin(g, "Kanalsteg (kHz)", 0.1, 1000, 0.5, c["scan_step_khz"], 3,
+                                            lambda v: self._set_conf("scan_step_khz", v))
+            self.scan_range_rows.append(self.scan_step_row)
+            self.scan_sq_row = self._combo(g, "Stanna när", ["Signalen är X dB över bruset", "Squelch-reglaget öppnar"],
+                                           c.get("scan_sq_mode", 0), self._on_scan_sq_mode)
+            self.scan_snr_row = self._spin(g, "Över brusgolvet (dB)", 3, 40, 1, c.get("scan_snr", 10.0), 0,
+                                           lambda v: self._set_conf("scan_snr", v),
+                                           "Brusgolvet mäts i varje fönster – fungerar på alla band")
             self._spin(g, "Väntetid efter signal (s)", 0, 60, 0.5, c["scan_hold"], 1,
                        lambda v: self._set_conf("scan_hold", v))
-            self._spin(g, "Tid per steg (ms)", 100, 5000, 50, c["scan_dwell_ms"], 0,
-                       lambda v: self._set_conf("scan_dwell_ms", int(v)))
+            self._spin(g, "Tid per fönster (ms)", 100, 5000, 50, c["scan_dwell_ms"], 0,
+                       lambda v: self._set_conf("scan_dwell_ms", int(v)),
+                       "Alla kanaler inom 1,2 MHz kollas samtidigt")
             self._spin(g, "Max lyssningstid (s)", 0, 600, 5, c.get("scan_max_listen", 0), 0,
                        lambda v: self._set_conf("scan_max_listen", v), "0 = stanna så länge signalen finns")
+            self.scan_prio_row = Adw.ComboRow(title="Prioritetskanal")
+            self.scan_prio_row.set_subtitle("Kollas hela tiden och tar över när den hörs")
+            self.scan_prio_row.connect("notify::selected", lambda r, _p: self._on_scan_prio(r.get_selected()))
+            g.add(self.scan_prio_row)
+            self._spin(g, "Kolla prioritet var (s)", 0.5, 30, 0.5, c.get("scan_prio_s", 2.0), 1,
+                       lambda v: self._set_conf("scan_prio_s", v),
+                       "Ligger den i samma fönster kollas den utan avbrott")
             self.scan_btn = self._button(g, "Starta skanning", self._toggle_scan)
             self._switch(g, "Hoppa över omodulerade bärvågor", c.get("scan_skip_carriers", True),
                          lambda v: self._set_conf("scan_skip_carriers", v),
@@ -4326,8 +4666,11 @@ def run_gui(args):
             self.sugg_btn.connect("clicked", lambda *_: self._lock_suggested())
             self.sugg_row.add_suffix(self.sugg_btn)
             g.add(self.sugg_row)
-            self._button(g, "Rensa spärrade frekvenser", self._clear_lockout)
+            self.lock_btn = self._button(g, "Spärrade frekvenser …", self._open_lockout)
             box.append(g)
+            self._refresh_scan_lists()
+            self._on_scan_mode(c["scan_mode"])
+            self._on_scan_sq_mode(c.get("scan_sq_mode", 0))
 
             g = self._section("Signallogg", "Hittar signaler automatiskt i hela bandet")
             self._switch(g, "Logga signaler", c["det_enabled"], self._on_det_enabled)
@@ -4460,6 +4803,39 @@ def run_gui(args):
             self.bm_cv.connect("activate", lambda cv, pos: self._tune_row(self.bm_sel.get_item(pos)))
             v.append(sw)
             nb.append_page(v, Gtk.Label(label="Bokmärken"))
+
+            # Skanner – träfflista
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            v.set_margin_top(6)
+            v.set_margin_start(6)
+            v.set_margin_end(6)
+            tb = Gtk.Box(spacing=6)
+            self.hit_count = Gtk.Label(label="Inga träffar än – starta skanningen", hexpand=True, xalign=0)
+            self.hit_count.add_css_class("dim-label")
+            tb.append(self.hit_count)
+            for label, cb in (("Lägg till som bokmärke", self._hit_bookmark), ("Spärra", self._hit_lock),
+                              ("Exportera CSV", self._export_hits), ("Rensa", self._clear_hits)):
+                b = Gtk.Button(label=label)
+                b.connect("clicked", lambda *_, cb=cb: cb())
+                tb.append(b)
+            v.append(tb)
+            ago = lambda t: (f"{int(time.time() - t)} s sedan" if time.time() - t < 120 else
+                             datetime.datetime.fromtimestamp(t).strftime("%H:%M:%S"))
+            cols = [
+                ("Frekvens (MHz)", lambda d: fmt_freq(d["f"]), "f", False),
+                ("Namn / band", lambda d: ("★ " if d["prio"] else "") + (d["namn"] or ""), "namn", True),
+                ("Mod", lambda d: d["mode"], "mode", False),
+                ("Träffar", lambda d: str(d["count"]), "count", False),
+                ("Total tid", lambda d: f"{d['dur']:.0f} s", "dur", False),
+                ("Senast", lambda d: ago(d["last"]), "last", False),
+                ("Max SNR", lambda d: f"{d['max_snr']:.0f} dB" if d["max_snr"] > -99 else "–", "max_snr", False),
+            ]
+            (self.hit_store, self.hit_cv, self.hit_sel, _f, _c, sw) = make_table(cols)
+            self.hit_rows = {}
+            self._hits_gen = -1
+            self.hit_cv.connect("activate", lambda cv, pos: self._tune_hit(self.hit_sel.get_item(pos)))
+            v.append(sw)
+            nb.append_page(v, Gtk.Label(label="Skanner"))
 
             # Avkodat
             v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -5265,6 +5641,208 @@ def run_gui(args):
             self.iq_btn.set_title("Stoppa IQ-inspelning")
             self.toast(f"IQ-inspelning: ca {rate_txt} per sekund")
 
+        # ── skanner: inställningar ──
+        def _on_scan_mode(self, i):
+            self.conf["scan_mode"] = i
+            self.scan_group_row.set_visible(i == 0)
+            for r in self.scan_range_rows:
+                r.set_visible(i == 1)
+
+        def _on_scan_sq_mode(self, i):
+            self.conf["scan_sq_mode"] = i
+            self.scan_snr_row.set_visible(i == 0)
+
+        def _on_scan_preset(self, i):
+            self.conf["scan_preset"] = i
+            name, a, b, step, mode = SCAN_PRESETS[i]
+            if a is None:
+                return
+            self.scan_entries["scan_start"].set_text(a)
+            self.scan_entries["scan_stop"].set_text(b)
+            self.scan_step_row.set_value(step)
+            self.conf["scan_step_khz"] = step
+            if mode != self.engine.mode:
+                self.set_mode(mode)
+
+        def _scan_groups(self):
+            return sorted({band_name(b["freq"]) or "Övrigt" for b in self.conf["bookmarks"]})
+
+        def _refresh_scan_lists(self):
+            """Uppdatera grupp- och prioritetslistan efter ändrade bokmärken."""
+            self._scan_lists_busy = True
+            groups = self._scan_groups()
+            self._scan_group_vals = [""] + groups
+            self.scan_group_row.set_model(Gtk.StringList.new(["Alla bokmärken"] + groups))
+            cur = self.conf.get("scan_group", "")
+            self.scan_group_row.set_selected(self._scan_group_vals.index(cur) if cur in self._scan_group_vals else 0)
+            bms = self.conf["bookmarks"]
+            self._scan_prio_vals = [None] + [b["freq"] for b in bms]
+            self.scan_prio_row.set_model(Gtk.StringList.new(
+                ["Ingen"] + [f"{b['name']} ({fmt_mhz(b['freq'])})" for b in bms]))
+            p = self.conf.get("scan_prio")
+            idx = next((i + 1 for i, b in enumerate(bms) if p and abs(b["freq"] - p) < 1), 0)
+            self.scan_prio_row.set_selected(idx)
+            self._scan_lists_busy = False
+
+        def _on_scan_group(self, i):
+            if getattr(self, "_scan_lists_busy", False) or i >= len(getattr(self, "_scan_group_vals", [])):
+                return
+            g = self._scan_group_vals[i]
+            self.conf["scan_group"] = g
+
+        def _on_scan_prio(self, i):
+            if getattr(self, "_scan_lists_busy", False) or i >= len(getattr(self, "_scan_prio_vals", [])):
+                return
+            self.conf["scan_prio"] = self._scan_prio_vals[i]
+            if self.scanner.active:
+                self.scanner.prio = self.scanner._prio_channel()
+
+        # ── skanner: träfflista ──
+        def _update_hits(self):
+            sc = self.scanner
+            if sc.hits_gen == self._hits_gen and not sc.active:
+                return
+            self._hits_gen = sc.hits_gen
+            for k, h in sc.hits.items():
+                row = self.hit_rows.get(k)
+                if row is None:
+                    row = self.hit_rows[k] = Row(h)
+                    self.hit_store.append(row)
+                else:
+                    row.data = h
+                    row.emit("updated")
+            for k in [k for k in self.hit_rows if k not in sc.hits]:
+                self.hit_rows.pop(k)
+            if not sc.hits and self.hit_store.get_n_items():
+                self.hit_store.remove_all()
+            n = len(sc.hits)
+            if n:
+                tot = sum(h["count"] for h in sc.hits.values())
+                self.hit_count.set_text(f"{n} frekvenser, {tot} träffar · dubbelklicka för att lyssna")
+
+        def _sel_hit(self):
+            it = self.hit_sel.get_selected_item()
+            if not it:
+                self.toast("Markera en träff först")
+            return it.data if it else None
+
+        def _tune_hit(self, item):
+            if item:
+                if self.scanner.active:
+                    self._toggle_scan()
+                self.tune(item.data["f"], item.data["mode"])
+
+        def _hit_bookmark(self):
+            h = self._sel_hit()
+            if not h:
+                return
+            if any(abs(b["freq"] - h["f"]) < 1 for b in self.conf["bookmarks"]):
+                self.toast("Finns redan som bokmärke")
+                return
+            name = (h["namn"] + " " if h["namn"] else "") + fmt_mhz(h["f"])
+            self.conf["bookmarks"].append({"name": name, "freq": h["f"], "mode": h["mode"]})
+            self._load_bookmarks()
+            self._refresh_scan_lists()
+            save_conf(self.conf)
+            self.toast(f"Bokmärke sparat: {name}")
+
+        def _hit_lock(self):
+            h = self._sel_hit()
+            if h:
+                self.scanner.lock_forever(h["f"])
+
+        def _clear_hits(self):
+            self.scanner.clear_hits()
+            self.hit_store.remove_all()
+            self.hit_rows.clear()
+            self.hit_count.set_text("Inga träffar")
+
+        def _export_hits(self):
+            dlg = Gtk.FileDialog(initial_name=f"skannertraffar_{datetime.datetime.now():%Y%m%d-%H%M}.csv")
+
+            def done(d, res):
+                try:
+                    path = d.save_finish(res).get_path()
+                except GLib.Error:
+                    return
+                try:
+                    with open(path, "w", newline="", encoding="utf-8") as fh:
+                        wr = csv.writer(fh)
+                        wr.writerow(["frekvens_hz", "namn", "modulering", "traffar", "total_tid_s", "forst", "senast",
+                                     "max_snr_db", "prioritet"])
+                        for h in sorted(self.scanner.hits.values(), key=lambda h: h["f"]):
+                            wr.writerow([round(h["f"]), h["namn"], h["mode"], h["count"], round(h["dur"], 1),
+                                         datetime.datetime.fromtimestamp(h["first"]).isoformat(timespec="seconds"),
+                                         datetime.datetime.fromtimestamp(h["last"]).isoformat(timespec="seconds"),
+                                         round(h["max_snr"], 1), int(h["prio"])])
+                    self.toast(f"Exporterade till {path}")
+                except OSError as ex:
+                    self.toast(f"Kunde inte spara: {ex}")
+            dlg.save(self, None, done)
+
+        def toast_action(self, msg, label, cb, timeout=6):
+            t = Adw.Toast.new(msg)
+            t.set_timeout(timeout)
+            t.set_button_label(label)
+            t.connect("button-clicked", lambda *_: cb())
+            self.toasts.add_toast(t)
+
+        def _open_lockout(self):
+            """Lista över spärrade frekvenser (permanenta och denna session) – ta bort en och en."""
+            win = Adw.Window(title="Spärrade frekvenser", modal=True, transient_for=self,
+                             default_width=460, default_height=520)
+            tv = Adw.ToolbarView()
+            hb = Adw.HeaderBar()
+            clear = Gtk.Button(label="Rensa alla")
+            clear.add_css_class("destructive-action")
+            hb.pack_start(clear)
+            tv.add_top_bar(hb)
+            lb = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            lb.add_css_class("boxed-list")
+            for m in ("start", "end", "top", "bottom"):
+                getattr(lb, f"set_margin_{m}")(12)
+            sc = Gtk.ScrolledWindow(vexpand=True)
+            sc.set_child(lb)
+            tv.set_content(sc)
+            win.set_content(tv)
+            sc_ = self.scanner
+
+            def fill():
+                while (ch := lb.get_first_child()) is not None:
+                    lb.remove(ch)
+                items = ([(f, "spärrad", "lockout") for f in self.conf.get("lockout", [])] +
+                         [(f, "denna session", "temp") for f in sc_.temp_lock] +
+                         [(f, "hittad störning (ej sparad)", "sugg") for f in self.suggested])
+                if not items:
+                    lb.append(Adw.ActionRow(title="Inga spärrade frekvenser"))
+                for f, what, kind in sorted(items):
+                    r = Adw.ActionRow(title=f"{fmt_mhz(f)} MHz", subtitle=f"{what} · {band_name(f) or ''}")
+                    b = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Ta bort")
+                    b.add_css_class("flat")
+                    b.connect("clicked", lambda *_, f=f, kind=kind: remove(f, kind))
+                    r.add_suffix(b)
+                    lb.append(r)
+
+            def remove(f, kind):
+                lst = {"lockout": self.conf.setdefault("lockout", []), "temp": sc_.temp_lock,
+                       "sugg": self.suggested}[kind]
+                for x in [x for x in lst if abs(x - f) < 1]:
+                    lst.remove(x)
+                if kind == "lockout":
+                    save_conf(self.conf)
+                fill()
+
+            def clear_all(*_):
+                self.conf["lockout"] = []
+                sc_.temp_lock.clear()
+                self.suggested.clear()
+                save_conf(self.conf)
+                log.info("Spärrlistan rensad")
+                fill()
+            clear.connect("clicked", clear_all)
+            fill()
+            win.present()
+
         def _lock_suggested(self):
             if not self.suggested:
                 self.toast("Inga hittade störningar att spärra")
@@ -5275,12 +5853,6 @@ def run_gui(args):
             self.toast(f"{len(self.suggested)} störningar spärrade")
             self.suggested = []
             save_conf(self.conf)
-
-        def _clear_lockout(self):
-            n = len(self.conf.get("lockout", []))
-            self.conf["lockout"] = []
-            log.info("Spärrlistan rensad (%d frekvenser)", n)
-            self.toast(f"{n} spärrade frekvenser borttagna")
 
         def _toggle_scan(self):
             if self.activity_active and self.activity_win:
@@ -5692,6 +6264,7 @@ def run_gui(args):
             self.conf["bookmarks"].append({"name": name, "freq": self.freq, "mode": self.engine.mode})
             self.bm_name.set_text("")
             self._load_bookmarks()
+            self._refresh_scan_lists()
             save_conf(self.conf)
             self.toast(f"Bokmärke sparat: {name}")
 
@@ -5705,6 +6278,7 @@ def run_gui(args):
             except ValueError:
                 pass
             self._load_bookmarks()
+            self._refresh_scan_lists()
             save_conf(self.conf)
 
         # ── felsökning ──
@@ -5803,6 +6377,10 @@ def run_gui(args):
                 log.exception("Fel vid uppdatering av signalloggen")
             e = self.engine
             self._play_tick()
+            try:
+                self._update_hits()
+            except Exception:
+                log.exception("Fel vid uppdatering av skannerträffarna")
             self.scan_lbl.set_text(self.scanner.status)
             self._ship_tick += 1
             if self.ship_win is not None and self.ship_win.get_visible() and self._ship_tick % 5 == 0:
@@ -5890,6 +6468,19 @@ def run_gui(args):
             self.args = args
             self.win = None
             self.connect("activate", self.on_activate)
+            self.connect("shutdown", self._on_shutdown)
+
+        def _on_shutdown(self, _app):
+            """Avslut utan att fönstret stängts (Ctrl+Q, app.quit()): släpp dongeln ordentligt."""
+            w = self.win
+            if w is not None and w.engine.running:
+                log.info("Avslutar – stoppar mottagningen")
+                try:
+                    w.scanner.stop()
+                    w.engine.stop()
+                    w.audio.stop()
+                except Exception:
+                    log.exception("Fel vid avslut")
 
         def on_activate(self, app):
             if self.win is not None:
@@ -5947,6 +6538,10 @@ def run_gui(args):
                 conf["direct"] = {"av": 0, "i": 1, "q": 2}[a.direktsampling]
             if a.squelch is not None:
                 conf["squelch"] = a.squelch
+                if a.skanna and a.snr is None:
+                    conf["scan_sq_mode"] = 1          # --squelch till skannern = använd squelch-reglaget
+            if a.snr is not None:
+                conf["scan_sq_mode"], conf["scan_snr"] = 0, a.snr
             if a.skanna:
                 conf["scan_mode"] = 0 if a.skanna == "bokmarken" else 1
             if a.intervall:
@@ -6027,6 +6622,34 @@ def list_webrx(query, position=None):
         print(f"{'':9s} {webbmottagare.summary(r, home)}")
     print(f"{len(L)} mottagare")
     return 0
+
+
+def scan_plan(chans, sr, half=0.4, guard=3 * BIN_HZ):
+    """Dela upp kanaler ({f, bw, …}) i fönster om ±half·sr, så att varje fönster kräver en enda
+    omstämning. Kanaler för nära fönstrets mitt (DC-spiken) flyttas till ett senare fönster."""
+    rem = sorted(chans, key=lambda c: c["f"])
+    wins = []
+    while rem:
+        c0 = rem[0]["f"] + sr * (half - 0.02)
+        mem = [ch for ch in rem if abs(ch["f"] - c0) <= sr * half and abs(ch["f"] - c0) > ch["bw"] / 2 + guard]
+        rem = [ch for ch in rem if ch not in mem]
+        wins.append({"c": c0, "chans": mem})
+    return wins
+
+
+def selftest_scan():
+    """Skannerns fönsterplanering: få omstämningar, alla kanaler med, ingen nära DC."""
+    ch = lambda f: {"f": f * 1e6, "bw": 12500, "mode": "NFM", "name": ""}
+    chans = [ch(f) for f in (144.8, 145.0, 145.5, 146.0, 131.725, 156.8, 161.975, 162.025, 118.1)]
+    chans += [ch(446.00625 + i * 0.0125) for i in range(16)]            # PMR446: 16 kanaler
+    w = scan_plan(chans, SR)
+    flat = [c for wd in w for c in wd["chans"]]
+    ok = len(flat) == len(chans) and len({id(c) for c in flat}) == len(chans)
+    ok &= all(abs(c["f"] - wd["c"]) <= SR * 0.4 and abs(c["f"] - wd["c"]) > 6250 + 3 * BIN_HZ
+              for wd in w for c in wd["chans"])
+    ok &= len(w) == 7                    # 118,1 | 131,725 | 144,8–145,5 | 146,0 | 156,8 | 161,975–162,025 | PMR446
+    print(f"  Skanner (fönsterplanering, {len(chans)} kanaler i {len(w)} fönster): {'OK' if ok else 'FEL'}")
+    return ok
 
 
 def selftest_iq():
@@ -6214,6 +6837,7 @@ def selftest(seconds=4.0):
         print(f"  Analysavkodare {name}: {'OK' if good else 'FEL'} ({feat['klass'] if feat else '–'})")
     iq_ok = selftest_iq()
     webrx_ok = selftest_webrx()
+    scan_ok = selftest_scan()
     try:
         iq_ok &= kiwisdr.selftest(SR, BLOCK)
     except Exception as ex:
@@ -6225,7 +6849,7 @@ def selftest(seconds=4.0):
     except Exception as ex:
         print(f"  ADS-B-avkodare: FEL ({ex})")
         adsb_ok = False
-    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok and adsb_ok and rtty_ok and psk_ok and dec_ok and iq_ok and webrx_ok
+    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok and adsb_ok and rtty_ok and psk_ok and dec_ok and iq_ok and webrx_ok and scan_ok
     print("RESULTAT: " + ("OK" if ok else f"FEL {errors}"))
     log.info("Självtest: %s (%d block, %.1f ms/block)", "OK" if ok else "FEL", st["blocks"], st["proc_ms"])
     return 0 if ok else 1
@@ -6259,6 +6883,8 @@ def main():
     p.add_argument("--webb", dest="web", nargs="?", type=int, const=0, metavar="PORT",
                    help="starta webbgränssnittet (standardport 8073)")
     p.add_argument("--squelch", type=float, metavar="DB", help="squelchnivå i dB, t.ex. -8")
+    p.add_argument("--snr", type=float, metavar="DB",
+                   help="skannern stannar när signalen är DB över brusgolvet (standard 10)")
     p.add_argument("--skanna", choices=["bokmarken", "intervall"], help="starta skanning direkt")
     p.add_argument("--intervall", metavar="START-STOPP", help="skanningsintervall i MHz, t.ex. 87.5-108")
     p.add_argument("--kanalsteg", type=float, metavar="KHZ", help="kanalsteg vid intervallskanning, t.ex. 12.5")
@@ -6279,7 +6905,7 @@ def main():
     p.add_argument("--kalibrera", action="store_true", help="öppna frekvenskalibreringen direkt")
     p.add_argument("--analysera", metavar="FREKVENS",
                    help="analysera signalen på FREKVENS i fliken Signalanalys (t.ex. 99.77 eller 14074k)")
-    p.add_argument("--flik", choices=["signallogg", "bokmarken", "avkodat", "analys"], help="flik att visa längst ner")
+    p.add_argument("--flik", choices=["signallogg", "bokmarken", "skanner", "avkodat", "analys"], help="flik att visa längst ner")
     p.add_argument("--skarmbild", nargs=2, metavar=("FIL", "SEKUNDER"),
                    help="spara en skärmbild av fönstret (PNG) efter angivet antal sekunder")
     p.add_argument("--debug", action="store_true", help="detaljerad loggning, även i terminalen")

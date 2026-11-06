@@ -20,10 +20,12 @@ Radiospanaren gör en billig RTL-SDR-dongel till en komplett mottagarstation med
 - Bandplan i vattenfallet: rundradio, amatörband, flyg, marin VHF, PMR446, militärflyg UHF, Rakel/TETRA och mer.
 
 **Skanner**
-- Skannar bokmärken eller ett frekvensintervall. Hela fönster på cirka 1,2 MHz analyseras samtidigt, så skanningen går snabbt.
+- Skannar bokmärken eller ett frekvensintervall. Hela fönster på cirka 1,2 MHz analyseras samtidigt, även bokmärken: alla inom samma fönster kontrolleras med en omstämning.
+- Stannar när signalen ligger X dB över det uppmätta brusgolvet, så samma inställning fungerar på alla band. Toppvärdeshållning fångar även korta skurar.
+- Prioritetskanal, bandförval (flyg, marin, 2 m, 70 cm, PMR446 m.fl.), grupper av bokmärken och en träfflista med antal träffar, tid och SNR, som kan exporteras och göras till bokmärken.
 - Stannar bara på riktiga signaler. Grannkanaler till starka sändare räknas inte som egna signaler.
 - Hoppar automatiskt över omodulerade bärvågor, alltså störningar från dongeln eller datorn. Den mäter om ljudet varierar som tal.
-- Spärrlista ("Hoppa över"), väntetid och max lyssningstid.
+- "Hoppa över" för sessionen eller spärra för alltid, lista över spärrade frekvenser, väntetid och max lyssningstid.
 
 **Signallogg** (som WaveShark)
 - Hittar alla signaler över brusnivån i hela fönstret och loggar frekvens, bandbredd, nivå, SNR och längd.
