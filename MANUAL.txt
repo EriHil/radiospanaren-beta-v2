@@ -1,5 +1,5 @@
 ══════════════════════════════════════════════════════════════════════
-  RADIOSPANAREN – MANUAL                                   version 2.5.0
+  RADIOSPANAREN – MANUAL                                   version 2.6.0
   SDR-mottagare, radioskanner och signallogg för Fedora
 ══════════════════════════════════════════════════════════════════════
 
@@ -32,6 +32,10 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
                                     Anslut till en rtl_tcp-server
   radiospanaren --kiwi http://sk5sm.proxy.kiwisdr.com:8073/ --frekvens 7074k
                                     Hämta I/Q från en KiwiSDR på nätet
+  radiospanaren --webbmottagare     Öppna listan över webbmottagare
+  radiospanaren --lista-webbmottagare sverige --position JO99bg
+                                    Skriv ut webbmottagare (sök: sverige, sk6ag,
+                                    ort …) med avstånd, band och lyssnare
   radiospanaren --frekvens 145.5    Startfrekvens (MHz om ingen enhet)
   radiospanaren --frekvens 7074k    ... med enhet: Hz, k, M, G
   radiospanaren --mod NFM           Modulering: WFM NFM AM USB LSB CW
@@ -357,8 +361,35 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   fungerar som med en egen dongel – med Kiwins antenn, var den än står.
   Välj Källa → "KiwiSDR (webb-SDR på nätet)", klistra in webbadressen (t.ex.
   http://sk5sm.proxy.kiwisdr.com:8073/), tryck ✓ och sedan ▶ Starta.
-  Hitta Kiwis: www.receiverbook.de/map eller rx.kiwisdr.com.
   Lösenordsskyddad Kiwi: skriv lösen@värd:port.
+
+ Webbmottagare på nätet (lista)
+  Sidopanelen → Mottagare → "🌐 Webbmottagare på nätet …" visar ca 1 500
+  mottagare: KiwiSDR, OpenWebRX och WebSDR. Listorna hämtas från
+  kiwisdr.com (via rx.linkfanel.net) och receiverbook.de, högst var 6:e
+  timme (cache i ~/.cache/radiospanaren). Dessutom finns en inbyggd svensk
+  lista: SA0BMC:s "Länktips till SDR-mottagare" (sa0bmc.se) och SK6AG:s
+  mottagare, varav flera inte finns i de publika listorna.
+  • Sök på namn, ort eller anropssignal. Filtrera på typ, grupp (Sverige,
+    SA0BMC:s länktips, SK6AG, Mina mottagare) och frekvens ("Täcker MHz").
+  • Skriv din lokator (t.ex. JO99bg) eller lat, lon för att sortera på
+    avstånd. Sortera också på namn eller lediga platser.
+  • Svenska, egna och korta urval kontrolleras direkt hos mottagaren: ✓ =
+    svarar (med aktuella lyssnare), ⚠ = svarar inte. OpenWebRX visar då
+    också sina band (ofta VHF/UHF).
+  • "Använd" väljer en KiwiSDR som källa (och startar om mottagningen).
+    Ligger frekvensen över 30 MHz stäms den till 7,074 MHz USB.
+  • "Bara webbläsare": ägaren har stängt Kiwin för andra program än
+    webbläsaren (ext_api=0, gäller t.ex. flera av SK6AG:s). Kiwin släpper
+    då in Radiospanaren men kastar ut den efter ca 10 s.
+  • "🔒 lösenord krävs": "Använd" frågar efter lösenordet.
+  • OpenWebRX och WebSDR kan bara öppnas i webbläsaren (🌐) – de skickar
+    färdigt ljud, inte I/Q.
+  • ☆ sparar i "Mina mottagare". "+ Lägg till" lägger till en mottagare
+    manuellt (typen känns igen automatiskt). Adressfältet "KiwiSDR-adress"
+    under Mottagare fungerar som förut för att skriva in en Kiwi direkt.
+  • websdr.org:s egen lista används inte – den får enligt dess ägare inte
+    återanvändas i andra program utan tillstånd.
   Bra att veta:
    • En Kiwi skickar bara ca 12 kHz I/Q åt gången (20 kHz på vissa). Zoomen
      sätts därför till 64 när du startar. Stämmer du utanför bandet stämmer
@@ -366,7 +397,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
    • Utanför Kiwins band visas brus på Kiwins egen nivå (inte riktiga signaler).
    • Automatisk förstärkning = Kiwins AGC; annars fast förstärkning i dB.
    • Varje Kiwi har bara 4–8 kanaler som delas med alla besökare, och många
-     har tidsgräns. "Fullt upptagen" = prova en annan Kiwi.
+     har tidsgräns. "Fullt upptagen" = prova en annan Kiwi. "Tillåter bara
+     lyssnare i webbläsaren" = ägaren har stängt den för andra program.
    • Intervallskanning går inte (för smalt band); bokmärkesskanning fungerar.
    • Flygradar (1090 MHz) använder alltid den egna dongeln.
 

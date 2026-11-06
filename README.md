@@ -16,6 +16,7 @@ Radiospanaren gör en billig RTL-SDR-dongel till en komplett mottagarstation med
 - Demodulering: WFM, NFM, AM, USB, LSB och CW. Squelch, AGC och de-emfas.
 - HF (0,5–28,8 MHz) via direktsampling (Q-grenen).
 - Källor: RTL-SDR via USB, rtl_tcp (en dongel på en annan dator), KiwiSDR (webb-SDR:er på nätet, 0–30 MHz) och en inbyggd simulator för test utan hårdvara.
+- Lista över ca 1 500 webbmottagare (KiwiSDR, OpenWebRX, WebSDR) från kiwisdr.com och receiverbook.de, plus SA0BMC:s svenska länktips och SK6AG. Sök, filtrera på typ, land och frekvens, sortera på avstånd från din lokator. Live-status direkt från mottagarna. Välj en KiwiSDR som källa med ett klick, öppna övriga i webbläsaren, eller lägg till egna.
 - Bandplan i vattenfallet: rundradio, amatörband, flyg, marin VHF, PMR446, militärflyg UHF, Rakel/TETRA och mer.
 
 **Skanner**

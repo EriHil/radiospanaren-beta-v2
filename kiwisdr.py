@@ -241,7 +241,12 @@ class KiwiClient:
                 self.rate = float(v)
                 self.nominal = 20250 if self.rate > 16000 else 12000
             elif k == "too_busy":
-                raise KiwiError(f"KiwiSDR:n är fullt upptagen – alla {v} kanaler används. Prova en annan Kiwi.")
+                if v.strip() == "0":     # ägaren tillåter inga anslutningar från andra program (ext_api=0)
+                    raise KiwiError("Den här KiwiSDR:n tillåter bara lyssnare i webbläsaren, inte andra program. "
+                                    "Öppna den i webbläsaren eller välj en annan Kiwi (Webbmottagare-listan "
+                                    "visar vilka som går).")
+                raise KiwiError(f"KiwiSDR:n är fullt upptagen – alla {v} platser för andra program än "
+                                "webbläsaren används. Prova en annan Kiwi eller vänta en stund.")
             elif k == "badp" and v == "1":
                 raise KiwiError("KiwiSDR:n kräver lösenord (skriv adressen som lösenord@värd:port)")
             elif k == "down":

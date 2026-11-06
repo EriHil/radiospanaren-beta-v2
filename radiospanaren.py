@@ -28,7 +28,7 @@ import threading
 
 APP_NAME = "Radiospanaren"
 APP_ID = "se.eh.Radiospanaren"
-VERSION = "2.5.0"
+VERSION = "2.6.0"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "radiospanaren")
@@ -38,6 +38,8 @@ LOG_FILE = os.path.join(STATE_DIR, "radiospanaren.log")
 STDERR_FILE = os.path.join(STATE_DIR, "stderr.log")
 REPORT_FILE = os.path.join(STATE_DIR, "felrapport.txt")
 CONF_FILE = os.path.join(CONF_DIR, "config.json")
+CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.join(HOME, ".cache")), "radiospanaren")
+WEBRX_CACHE = os.path.join(CACHE_DIR, "webbmottagare.json")
 CSS_FILE = os.path.join(CONF_DIR, "style.css")
 MANUAL_FILE = os.path.join(APP_DIR, "MANUAL.txt")
 
@@ -176,6 +178,7 @@ import math
 import re
 import queue
 import socket
+import urllib.parse
 import struct
 import shutil
 import subprocess
@@ -196,6 +199,7 @@ try:
     import analysavkodare
     import iqfil
     import kiwisdr
+    import webbmottagare
 except ImportError as _e:  # pragma: no cover
     setup_logging()
     log.critical("Saknar Python-paket: %s. Installera med: sudo dnf install python3-numpy python3-scipy", _e)
@@ -257,7 +261,7 @@ DEFAULT_BOOKMARKS = [
 BOOKMARK_VERSION = 2
 
 DEFAULT_CONF = {
-    "source": "rtl", "tcp_addr": "127.0.0.1:1234", "kiwi_addr": "", "auto_gain": True, "gain": 30.0, "ppm": 0,
+    "source": "rtl", "tcp_addr": "127.0.0.1:1234", "kiwi_addr": "", "webrx_own": [], "my_pos": "", "auto_gain": True, "gain": 30.0, "ppm": 0,
     "direct": 0, "biast": False, "freq": 100.0e6, "mode": "WFM", "bw": None, "squelch": -150.0,
     "volume": 80, "step_idx": 0, "db_min": -100.0, "db_max": -20.0, "zoom": 1, "spec_frac": 0.35,
     "colormap": "spanare", "theme": 0, "skin": "spanare", "analys_bw_idx": 0, "analys_follow": False, "scan_mode": 0, "scan_start": "144.0", "scan_stop": "146.0",
@@ -2379,6 +2383,303 @@ def run_gui(args):
                     self._next_span(now)
 
     # ── Fartygskarta (AIS) ──
+    class WebRxWindow(Adw.Window):
+        """Lista över webbmottagare (KiwiSDR, OpenWebRX, WebSDR) – välj en KiwiSDR som källa."""
+        MAX_ROWS = 300
+        GROUPS = ["Alla", "Sverige", webbmottagare.SA0BMC, webbmottagare.SK6AG, "Mina mottagare"]
+        SORTS = ["Avstånd", "Namn", "Lediga platser"]
+        TYPES = ["Alla typer", "KiwiSDR", "OpenWebRX", "WebSDR"]
+
+        def __init__(self, main):
+            super().__init__(title="Webbmottagare – Radiospanaren", transient_for=main)
+            self.main = main
+            c = main.conf
+            self.cat = webbmottagare.Catalog(WEBRX_CACHE, c.setdefault("webrx_own", []))
+            self.set_default_size(1000, 760)
+            self.set_hide_on_close(True)
+            self._probed = {}
+            self._timer = None
+            tv = Adw.ToolbarView()
+            hb = Adw.HeaderBar()
+            self.refresh_btn = Gtk.Button(icon_name="view-refresh-symbolic",
+                                          tooltip_text="Hämta listorna på nytt och kontrollera de som visas")
+            self.refresh_btn.connect("clicked", lambda *_: self._refresh(force=True))
+            hb.pack_end(self.refresh_btn)
+            b = Gtk.Button(label="+ Lägg till")
+            b.set_tooltip_text("Lägg till en egen mottagare (skriv in adressen manuellt)")
+            b.connect("clicked", lambda *_: self._add_own())
+            hb.pack_start(b)
+            tv.add_top_bar(hb)
+
+            bar = Gtk.Box(spacing=6)
+            for m in ("start", "end", "top", "bottom"):
+                getattr(bar, f"set_margin_{m}")(6)
+            self.search = Gtk.SearchEntry(placeholder_text="Sök namn, plats, anropssignal …", hexpand=True)
+            self.search.set_text(c.get("webrx_search", ""))
+            self.search.connect("search-changed", lambda *_: self._queue())
+            bar.append(self.search)
+            self.dd_type = Gtk.DropDown.new_from_strings(self.TYPES)
+            self.dd_type.set_selected(c.get("webrx_type", 0))
+            self.dd_group = Gtk.DropDown.new_from_strings(self.GROUPS)
+            self.dd_group.set_selected(c.get("webrx_group", 1))
+            self.dd_sort = Gtk.DropDown.new_from_strings(self.SORTS)
+            self.dd_sort.set_selected(c.get("webrx_sort", 0))
+            for d in (self.dd_type, self.dd_group, self.dd_sort):
+                d.connect("notify::selected", lambda *_: self._queue())
+                bar.append(d)
+            self.freq = Gtk.Entry(placeholder_text="Täcker MHz", width_chars=9,
+                                  tooltip_text="Visa bara mottagare som tar emot frekvensen (t.ex. 7.074 eller 145.5)")
+            self.freq.connect("changed", lambda *_: self._queue())
+            bar.append(self.freq)
+            self.pos = Gtk.Entry(placeholder_text="Din lokator", width_chars=10,
+                                 tooltip_text="Din position för avståndet: Maidenhead-lokator (t.ex. JO99bg) "
+                                              "eller lat, lon (t.ex. 59.33, 18.07)")
+            self.pos.set_text(c.get("my_pos", ""))
+            self.pos.connect("changed", lambda *_: self._queue())
+            bar.append(self.pos)
+            tv.add_top_bar(bar)
+
+            self.lb = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            self.lb.add_css_class("boxed-list")
+            for m in ("start", "end", "bottom"):
+                getattr(self.lb, f"set_margin_{m}")(10)
+            sc = Gtk.ScrolledWindow(vexpand=True)
+            sc.set_child(self.lb)
+            tv.set_content(sc)
+            self.status = Gtk.Label(xalign=0, wrap=True)
+            self.status.add_css_class("dim-label")
+            self.status.add_css_class("caption")
+            for m in ("start", "end", "top", "bottom"):
+                getattr(self.status, f"set_margin_{m}")(6)
+            tv.add_bottom_bar(self.status)
+            self.toasts = Adw.ToastOverlay()
+            self.toasts.set_child(tv)
+            self.set_content(self.toasts)
+            self._rebuild()
+            self._refresh(force=self.cat.stale())
+
+        # ── data ──
+        def _refresh(self, force=False):
+            if force and self.cat.refresh(lambda: GLib.idle_add(self._after_fetch)):
+                self.refresh_btn.set_sensitive(False)
+                self.status.set_text("Hämtar listor från kiwisdr.com och receiverbook.de …")
+            if force:
+                self._probed.clear()
+            self._probe_visible(force=force)
+
+        def _after_fetch(self):
+            self.refresh_btn.set_sensitive(True)
+            if self.cat.errors:
+                self.toast("Kunde inte hämta: " + ", ".join(self.cat.errors))
+            self._rebuild()
+            return False
+
+        def _probe_visible(self, force=False):
+            """Fråga mottagarna själva om status – de svenska/egna direkt, annars när listan är kort."""
+            now = time.time()
+            want = [r["url"] for r in self.cat.all() if r["grupp"]]
+            want += [r["url"] for r in getattr(self, "_shown", [])[:40]] if len(getattr(self, "_shown", [])) <= 40 else []
+            todo = [u for u in dict.fromkeys(want) if force or now - self._probed.get(u, 0) > 600]
+            if not todo:
+                return
+            for u in todo:
+                self._probed[u] = now
+            self.cat.probe(todo, each=lambda: GLib.idle_add(self._soon_rebuild))
+
+        def _soon_rebuild(self):
+            if not getattr(self, "_rb_timer", None):
+                def go():
+                    self._rb_timer = None
+                    self._rebuild()
+                    return False
+                self._rb_timer = GLib.timeout_add(400, go)
+            return False
+
+        def home(self):
+            try:
+                return webbmottagare.parse_position(self.pos.get_text())
+            except ValueError:
+                return None
+
+        def _filtered(self):
+            L = self.cat.all()
+            t = self.dd_type.get_selected()
+            if t:
+                L = [r for r in L if r["typ"] == self.TYPES[t]]
+            g = self.GROUPS[self.dd_group.get_selected()]
+            if g == "Sverige":
+                L = [r for r in L if webbmottagare.is_swedish(r)]
+            elif g == "Mina mottagare":
+                L = [r for r in L if r["grupp"] == "Mina"]
+            elif g != "Alla":
+                L = [r for r in L if r["grupp"] == g]
+            q = self.search.get_text().strip()
+            if q:
+                L = [r for r in L if webbmottagare.matches(r, q)]
+            ft = self.freq.get_text().strip()
+            if ft:
+                try:
+                    hz = parse_freq(ft)
+                    L = [r for r in L if not r["band"] or webbmottagare.covers(r, hz)]
+                except ValueError:
+                    pass
+            home = self.home()
+            s = self.dd_sort.get_selected()
+            dead = lambda r: 1 if (r.get("status") and not r["status"].get("ok")) else 0
+            if s == 0 and home:
+                L.sort(key=lambda r: (dead(r), webbmottagare.distance_km(home, r["pos"]) or 1e9))
+            elif s == 2:
+                L.sort(key=lambda r: (dead(r), -((r["users_max"] or 0) - (r["users"] or 0)) if r["users"] is not None
+                                      else 1, r["namn"].lower()))
+            else:
+                L.sort(key=lambda r: (dead(r), r["namn"].lower()))
+            return L
+
+        # ── visning ──
+        def _queue(self):
+            if self._timer:
+                GLib.source_remove(self._timer)
+            self._timer = GLib.timeout_add(250, self._apply)
+
+        def _apply(self):
+            self._timer = None
+            c = self.main.conf
+            c["webrx_search"] = self.search.get_text()
+            c["webrx_type"], c["webrx_group"], c["webrx_sort"] = (self.dd_type.get_selected(),
+                                                                   self.dd_group.get_selected(),
+                                                                   self.dd_sort.get_selected())
+            if self.home() or not self.pos.get_text().strip():
+                c["my_pos"] = self.pos.get_text().strip()
+            self._rebuild()
+            self._probe_visible()
+            return False
+
+        def _rebuild(self):
+            L = self._filtered()
+            self._shown = L
+            while (ch := self.lb.get_first_child()) is not None:
+                self.lb.remove(ch)
+            home = self.home()
+            cur = webbmottagare.norm_url(self.main.conf.get("kiwi_addr", "")) if self.main.conf.get("kiwi_addr") else None
+            for r in L[:self.MAX_ROWS]:
+                self.lb.append(self._row(r, home, cur))
+            if not L:
+                lab = Adw.ActionRow(title="Inga mottagare matchar",
+                                    subtitle="Ändra sökningen eller filtren, eller lägg till en egen med ”+ Lägg till”")
+                self.lb.append(lab)
+            n_all = len(self.cat.all())
+            age = time.time() - self.cat.fetched if self.cat.fetched else None
+            src = (f"listor hämtade för {int(age // 3600)} h {int(age % 3600 // 60)} min sedan" if age is not None
+                   else "listorna är inte hämtade ännu")
+            more = f" (de första {self.MAX_ROWS} – sök för att begränsa)" if len(L) > self.MAX_ROWS else ""
+            self.status.set_text(f"Visar {min(len(L), self.MAX_ROWS)} av {len(L)} som matchar, {n_all} totalt{more} · {src} · "
+                                 "Källor: kiwisdr.com (via rx.linkfanel.net), receiverbook.de, SA0BMC:s länktips, SK6AG. "
+                                 "Bara KiwiSDR kan tas emot i Radiospanaren – OpenWebRX och WebSDR öppnas i webbläsaren.")
+            return False
+
+        def _row(self, r, home, cur):
+            esc = GLib.markup_escape_text
+            row = Adw.ActionRow(title=esc(r["namn"] or r["url"]), subtitle=esc(webbmottagare.summary(r, home)))
+            row.set_subtitle_lines(2)
+            row.set_tooltip_text("\n".join(x for x in (r["url"], r["antenn"] and f"Antenn: {r['antenn']}",
+                                                       r["snr"] and f"SNR: {r['snr']} dB",
+                                                       "Från: " + ", ".join(r["källor"])) if x))
+            badge = Gtk.Label(label={"KiwiSDR": "Kiwi", "OpenWebRX": "OWRX", "WebSDR": "WebSDR"}.get(r["typ"], r["typ"]),
+                              width_chars=6, valign=Gtk.Align.CENTER)
+            badge.add_css_class("caption")
+            badge.add_css_class("accent" if r["typ"] == "KiwiSDR" else "dim-label")
+            row.add_prefix(badge)
+            st = r.get("status")
+            if st:
+                ic = Gtk.Image.new_from_icon_name("emblem-ok-symbolic" if st.get("ok") else "dialog-warning-symbolic")
+                ic.set_tooltip_text(f"Svarade på {st.get('ms', 0)} ms" if st.get("ok") else st.get("fel", "svarar inte"))
+                row.add_prefix(ic)
+            if r["typ"] == "KiwiSDR" and not webbmottagare.kiwi_ok(r):
+                lab = Gtk.Label(label="Bara webbläsare", valign=Gtk.Align.CENTER)
+                lab.add_css_class("dim-label")
+                lab.add_css_class("caption")
+                lab.set_tooltip_text("Ägaren har stängt den här Kiwin för andra program än webbläsaren "
+                                     "(ext_api=0). Öppna den med 🌐.")
+                row.add_suffix(lab)
+            elif r["typ"] == "KiwiSDR":
+                b = Gtk.Button(label="Används" if cur == webbmottagare.norm_url(r["url"]) else "Använd",
+                               valign=Gtk.Align.CENTER)
+                b.add_css_class("suggested-action")
+                b.set_tooltip_text("Ta emot från den här KiwiSDR:n i Radiospanaren")
+                b.connect("clicked", lambda *_: self.main.use_webrx(r))
+                row.add_suffix(b)
+            w = Gtk.Button(label="🌐", valign=Gtk.Align.CENTER, tooltip_text="Öppna i webbläsaren")
+            w.add_css_class("flat")
+            w.connect("clicked", lambda *_: self.main.open_uri(r["url"]))
+            row.add_suffix(w)
+            own = any(webbmottagare.norm_url(o["url"]) == webbmottagare.norm_url(r["url"]) for o in self.cat.own)
+            s = Gtk.Button(icon_name="user-trash-symbolic" if r["grupp"] == "Mina" else
+                           ("starred-symbolic" if own else "non-starred-symbolic"), valign=Gtk.Align.CENTER,
+                           tooltip_text="Ta bort från Mina mottagare" if own else "Spara i Mina mottagare")
+            s.add_css_class("flat")
+            s.connect("clicked", lambda *_: self._toggle_own(r))
+            row.add_suffix(s)
+            return row
+
+        def _toggle_own(self, r):
+            k = webbmottagare.norm_url(r["url"])
+            own = self.cat.own
+            hit = [o for o in own if webbmottagare.norm_url(o["url"]) == k]
+            if hit:
+                for o in hit:
+                    own.remove(o)
+                self.toast(f"Borttagen från Mina mottagare: {r['namn'] or r['url']}")
+            else:
+                own.append({"url": r["url"], "namn": r["namn"], "typ": r["typ"]})
+                self.toast(f"Sparad i Mina mottagare: {r['namn'] or r['url']}")
+            self.main.conf["webrx_own"] = own
+            self._rebuild()
+
+        def _add_own(self):
+            dlg = Adw.MessageDialog(transient_for=self, heading="Lägg till egen mottagare",
+                                    body="Skriv adressen du surfar in på. Typen (KiwiSDR, OpenWebRX eller WebSDR) "
+                                         "känns igen automatiskt.")
+            lb = Gtk.ListBox()
+            lb.add_css_class("boxed-list")
+            addr = Adw.EntryRow(title="Adress, t.ex. http://sk6ag1.ddns.net:8071")
+            name = Adw.EntryRow(title="Namn (valfritt)")
+            lb.append(addr)
+            lb.append(name)
+            dlg.set_extra_child(lb)
+            dlg.add_response("cancel", "Avbryt")
+            dlg.add_response("ok", "Lägg till")
+            dlg.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+            dlg.set_default_response("ok")
+
+            def resp(_d, rid):
+                u = addr.get_text().strip()
+                if rid != "ok" or not u:
+                    return
+                url = webbmottagare.clean_url(u)
+                self.cat.own.append({"url": url, "namn": name.get_text().strip(), "typ": "KiwiSDR"})
+                self.main.conf["webrx_own"] = self.cat.own
+                self.dd_group.set_selected(self.GROUPS.index("Mina mottagare"))
+                self.toast("Tillagd – kontrollerar mottagaren …")
+
+                def probed():
+                    st = self.cat.status.get(webbmottagare.norm_url(url)) or {}
+                    for o in self.cat.own:
+                        if o["url"] == url:
+                            if st.get("typ"):
+                                o["typ"] = st["typ"]
+                            if not o["namn"] and st.get("namn"):
+                                o["namn"] = st["namn"]
+                    self._rebuild()
+                    self.toast(f"{st.get('typ') or 'Okänd typ'}: {st.get('namn') or url}" if st.get("ok")
+                               else f"Svarar inte just nu: {st.get('fel', '')}")
+                    return False
+                self.cat.probe([url], lambda: GLib.idle_add(probed))
+            dlg.connect("response", resp)
+            dlg.present()
+
+        def toast(self, msg):
+            self.toasts.add_toast(Adw.Toast.new(msg))
+
     class ShipWindow(Adw.Window):
         MAX_AGE = 30 * 60          # fartyg försvinner efter 30 min utan meddelanden
 
@@ -3733,6 +4034,7 @@ def run_gui(args):
             self.suggested = []     # bärvågor som skannern hoppat över denna session
             self.ships = {}         # MMSI -> sammanslagen fartygsinformation (AIS)
             self.ship_win = None
+            self.webrx_win = None
             self.activity_win = None
             self.activity_active = False
             self._ship_tick = 0
@@ -3787,6 +4089,10 @@ def run_gui(args):
                 GLib.timeout_add(800, lambda: self._open_activity() or False)
             if args.fartygskarta:
                 GLib.timeout_add(800, lambda: self._open_ship_map() or False)
+            if args.position:
+                self.conf["my_pos"] = args.position
+            if args.webbmottagare:
+                GLib.timeout_add(800, lambda: self._open_webrx() or False)
             if args.flik:
                 GLib.idle_add(lambda: self.bottom_nb.set_current_page(
                     ["signallogg", "bokmarken", "avkodat", "analys"].index(args.flik)) or False)
@@ -3908,8 +4214,8 @@ def run_gui(args):
             box.set_margin_end(12)
 
             g = self._section("Mottagare")
-            self._combo(g, "Källa", SOURCE_NAMES, SOURCES.index(c["source"]) if c["source"] in SOURCES else 0,
-                        self._on_source)
+            self.source_row = self._combo(g, "Källa", SOURCE_NAMES,
+                                          SOURCES.index(c["source"]) if c["source"] in SOURCES else 0, self._on_source)
             self.tcp_row = Adw.EntryRow(title="rtl_tcp-adress (värd:port)")
             self.tcp_row.set_text(c["tcp_addr"])
             self.tcp_row.set_show_apply_button(True)
@@ -3924,6 +4230,7 @@ def run_gui(args):
                                            "Kiwin ger ca 12 kHz I/Q i taget, 0–30 MHz.")
             self.kiwi_row.connect("apply", lambda r: self._set_conf("kiwi_addr", r.get_text().strip()))
             g.add(self.kiwi_row)
+            self._button(g, "🌐 Webbmottagare på nätet (KiwiSDR, OpenWebRX, WebSDR) …", self._open_webrx)
             self.hw_rows = [self._switch(g, "Automatisk förstärkning", c["auto_gain"], self._on_auto_gain)]
             self.gain_row = self._spin(g, "Förstärkning (dB)", 0, 49.6, 0.5, c["gain"], 1, self._on_gain)
             self.gain_row.set_sensitive(not c["auto_gain"])
@@ -5152,6 +5459,66 @@ def run_gui(args):
             if not self.engine.running:
                 self.toast("Starta mottagningen, välj band och tryck ▶ Svep")
 
+        # ── webbmottagare ──
+        def _open_webrx(self):
+            try:
+                if self.webrx_win is None:
+                    self.webrx_win = WebRxWindow(self)
+                self.webrx_win.present()
+            except Exception as ex:
+                log.exception("Kunde inte öppna listan över webbmottagare")
+                self.toast(f"Kunde inte öppna webbmottagarna: {ex}")
+
+        def open_uri(self, uri):
+            try:
+                Gio.AppInfo.launch_default_for_uri(uri, None)
+            except GLib.Error as ex:
+                self.toast(f"Kunde inte öppna {uri}: {ex.message}")
+
+        def _ask_kiwi_password(self, r):
+            parent = self.webrx_win if self.webrx_win and self.webrx_win.get_visible() else self
+            dlg = Adw.MessageDialog(transient_for=parent, heading="Lösenord krävs",
+                                    body=f"{r['namn'] or r['url']} är privat. Ange lösenordet du fått av ägaren.")
+            pw = Adw.PasswordEntryRow(title="Lösenord")
+            lb = Gtk.ListBox()
+            lb.add_css_class("boxed-list")
+            lb.append(pw)
+            dlg.set_extra_child(lb)
+            dlg.add_response("cancel", "Avbryt")
+            dlg.add_response("ok", "Anslut")
+            dlg.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+            dlg.set_default_response("ok")
+            dlg.connect("response", lambda _d, rid: rid == "ok" and pw.get_text() and
+                        self.use_webrx(r, password=pw.get_text()))
+            dlg.present()
+
+        def use_webrx(self, r, password=None):
+            """Välj en KiwiSDR ur listan som källa (och starta om mottagningen om den är igång)."""
+            if not webbmottagare.kiwi_ok(r):
+                self.open_uri(r["url"])
+                return
+            if r.get("auth") == "password" and not password:
+                self._ask_kiwi_password(r)
+                return
+            url = r["url"]
+            if password:
+                p = urllib.parse.urlsplit(url)
+                url = f"{p.scheme}://{urllib.parse.quote(password, safe='')}@{p.netloc}{p.path}"
+            self.conf["kiwi_addr"] = url
+            self.kiwi_row.set_text(url)
+            running = self.engine.running
+            if running:
+                self.btn_start.set_active(False)
+            self.source_row.set_selected(SOURCES.index("kiwi"))
+            if self.freq > kiwisdr.KIWI_MAX_HZ or self.freq < 10e3:
+                self.tune(7.074e6, "USB")
+            log.info("Webbmottagare vald: %s (%s)", r["namn"], url)
+            self.toast(f"KiwiSDR: {r['namn'] or url}")
+            if running:
+                GLib.timeout_add(300, lambda: self.btn_start.set_active(True) or False)
+            if self.webrx_win:
+                self.webrx_win._rebuild()
+
         def _open_ship_map(self):
             try:
                 if self.ship_win is None:
@@ -5357,7 +5724,7 @@ def run_gui(args):
             """Renderar fönstret till en PNG-fil (fungerar även under Wayland)."""
             try:
                 win = self
-                for w in (getattr(self, "activity_win", None), getattr(self, "ship_win", None),
+                for w in (getattr(self, "webrx_win", None), getattr(self, "activity_win", None), getattr(self, "ship_win", None),
                           getattr(self, "an_win", None)):
                     if w is not None and w.get_visible():
                         win = w
@@ -5609,6 +5976,59 @@ def run_gui(args):
 # ════════════════════════════════════════════════════════════════════
 # 8. KOMMANDORAD
 # ════════════════════════════════════════════════════════════════════
+def selftest_webrx():
+    """Webbmottagarlistan utan nätverk: lokator, avstånd, sammanslagning och svensk-filtret."""
+    W = webbmottagare
+    ok = True
+    la, lo = W.locator_to_latlon("JO99bg")
+    ok &= abs(la - 59.2708) < 0.001 and abs(lo - 18.125) < 0.001
+    ok &= round(W.distance_km((59.33, 18.07), (57.71, 11.97))) in range(390, 400)    # Stockholm–Göteborg
+    a = [W._rx("http://lodsdr.proxy.kiwisdr.com:8073", "SM5VXO", "KiwiSDR", källor=["A"], pos=(58.4, 15.6))]
+    b = [W._rx("http://lodsdr.proxy.kiwisdr.com", "SM5VXO Linköping", "KiwiSDR", källor=["B"], users=1, users_max=8),
+         W._rx("http://webrx.sk3gk.se:8074", "SK3GK Kungsberget", "OpenWebRX", källor=["B"])]
+    c = [W._rx("http://x.example:8073", "SM5VXO", "KiwiSDR", källor=["C"], pos=(58.4, 15.6), ext_api=0)]
+    m = W.merge(a, b, c)            # samma Kiwi: proxy med/utan port (A+B) och samma namn+plats (C)
+    ok &= len(m) == 2 and m[0]["users_max"] == 8 and m[0]["ext_api"] == 0 and m[0]["källor"] == ["A", "B", "C"]
+    ok &= W.is_swedish(m[1]) and not W.kiwi_ok(m[0])
+    ok &= len(W.builtin()) == len(W.BUILTIN) and any("sk6ag" in r["url"] for r in W.builtin())
+    print(f"  Webbmottagare (lokator, avstånd, sammanslagning): {'OK' if ok else 'FEL'}")
+    return ok
+
+
+def list_webrx(query, position=None):
+    """--lista-webbmottagare: hämta listorna (eller cachen) och skriv ut de som matchar."""
+    cat = webbmottagare.Catalog(WEBRX_CACHE, load_conf().get("webrx_own", []))
+    if cat.stale():
+        print("Hämtar listor från kiwisdr.com och receiverbook.de …", file=sys.stderr)
+        ev = threading.Event()
+        cat.refresh(ev.set)
+        ev.wait(90)
+        for k, e in cat.errors.items():
+            print(f"  kunde inte hämta {k}: {e}", file=sys.stderr)
+    L = cat.all()
+    q = (query or "").strip()
+    if q.lower() in ("sverige", "sweden"):
+        L = [r for r in L if webbmottagare.is_swedish(r)]
+    elif q:
+        L = [r for r in L if webbmottagare.matches(r, q)]
+    home = None
+    try:
+        home = webbmottagare.parse_position(position or load_conf().get("my_pos", ""))
+    except ValueError as e:
+        print(f"Ogiltig position: {e}", file=sys.stderr)
+    if len(L) <= 60:
+        ev = threading.Event()
+        cat.probe([r["url"] for r in L], ev.set)
+        ev.wait(30)
+        L = [r for r in cat.all() if webbmottagare.norm_url(r["url"]) in {webbmottagare.norm_url(x["url"]) for x in L}]
+    L.sort(key=lambda r: (webbmottagare.distance_km(home, r["pos"]) or 1e9) if home else r["namn"].lower())
+    for r in L:
+        print(f"{r['typ']:9s} {r['url']:45s} {r['namn'][:50]}")
+        print(f"{'':9s} {webbmottagare.summary(r, home)}")
+    print(f"{len(L)} mottagare")
+    return 0
+
+
 def selftest_iq():
     """IQ-inspelning och uppspelning: skriv SigMF (med omstämning), WAV och rå cf32 i en annan takt,
     spela upp dem med FileSource och kontrollera frekvens, mittfrekvens och nivå."""
@@ -5793,6 +6213,7 @@ def selftest(seconds=4.0):
         dec_ok &= good
         print(f"  Analysavkodare {name}: {'OK' if good else 'FEL'} ({feat['klass'] if feat else '–'})")
     iq_ok = selftest_iq()
+    webrx_ok = selftest_webrx()
     try:
         iq_ok &= kiwisdr.selftest(SR, BLOCK)
     except Exception as ex:
@@ -5804,7 +6225,7 @@ def selftest(seconds=4.0):
     except Exception as ex:
         print(f"  ADS-B-avkodare: FEL ({ex})")
         adsb_ok = False
-    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok and adsb_ok and rtty_ok and psk_ok and dec_ok and iq_ok
+    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok and adsb_ok and rtty_ok and psk_ok and dec_ok and iq_ok and webrx_ok
     print("RESULTAT: " + ("OK" if ok else f"FEL {errors}"))
     log.info("Självtest: %s (%d block, %.1f ms/block)", "OK" if ok else "FEL", st["blocks"], st["proc_ms"])
     return 0 if ok else 1
@@ -5849,6 +6270,11 @@ def main():
     p.add_argument("--aprs", action="store_true", help="slå på APRS-avkodning")
     p.add_argument("--direktsampling", choices=["av", "i", "q"], help="direktsampling för HF (q för RTL-SDR v3/NESDR)")
     p.add_argument("--fartygskarta", action="store_true", help="öppna fartygskartan (AIS) direkt")
+    p.add_argument("--webbmottagare", action="store_true",
+                   help="öppna listan över webbmottagare (KiwiSDR, OpenWebRX, WebSDR) direkt")
+    p.add_argument("--lista-webbmottagare", nargs="?", const="", metavar="SÖK",
+                   help="skriv ut webbmottagare i terminalen, t.ex. --lista-webbmottagare sverige")
+    p.add_argument("--position", metavar="LOKATOR", help="din position för avstånd, t.ex. JO99bg eller 59.33,18.07")
     p.add_argument("--aktivitetskarta", action="store_true", help="öppna aktivitetskartan direkt")
     p.add_argument("--kalibrera", action="store_true", help="öppna frekvenskalibreringen direkt")
     p.add_argument("--analysera", metavar="FREKVENS",
@@ -5918,6 +6344,8 @@ def main():
         else:
             print("Inga sparade inställningar fanns.")
         return 0
+    if args.lista_webbmottagare is not None:
+        return list_webrx(args.lista_webbmottagare, args.position)
     if args.sjalvtest:
         return selftest()
     if args.intervall:
