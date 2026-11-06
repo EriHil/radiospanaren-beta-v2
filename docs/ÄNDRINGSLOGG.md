@@ -1,5 +1,10 @@
 # Ändringslogg
 
+## 2.10.0 (2026-11-06)
+
+- **Flygradar kan hämta flygplan från adsb.lol på internet**, utan dongel. Välj "adsb.lol (internet, ingen dongel)" i listan, eller starta med `flygradar --kalla adsblol`. Den hämtar flygplan inom 250 nautiska mil från kartans mitt var 5:e sekund. Det visar flygplan som andra matar in till adsb.lol, inte det din dongel hör. Mittpunkten skickas till adsb.lol vid varje anrop. Flygplansdata: adsb.lol (ODbL).
+- Vid fel väntar Flygradar allt längre mellan försöken, högst 60 s, och visar felet en gång.
+
 ## 2.9.3 (2026-11-06)
 
 - **Väderfax föreslås inte längre för vilken FM-signal som helst.** Faxavkodaren kräver faxets startton eller fasningspuls innan den sätter signaltypen.

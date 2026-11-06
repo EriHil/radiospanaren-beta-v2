@@ -71,6 +71,7 @@ Bara meddelanden med korrekt kontrollsumma (CRC) visas. Positioner kan öppnas p
 - Visar flygplanen i närheten på en OpenStreetMap-karta (libshumate), med kursriktning, höjdfärg och spår.
 - Avkodar Mode S och ADS-B: DF17/18, DF11 och DF4/5/20/21. CRC-24 med rättning av enstaka bitfel, och CPR-positionsavkodning (global och lokal).
 - Varnar för nödkoderna 7500, 7600 och 7700. Saknas kartan kan den installeras med en knapp.
+- Kan också hämta flygplan från adsb.lol på internet, utan dongel (välj källan i listan överst).
 
 ![Flygradar](docs/bilder/flygradar.png)
 
