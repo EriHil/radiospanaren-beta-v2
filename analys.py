@@ -298,7 +298,7 @@ def fit_bandwidth(z, fs, survey_bw, near_hz=300.0):
     # smal signal (t.ex. en nycklad bärvåg) syns inte i grov upplösning: försök igen finare
     if fin > grov and (r is None or r[1] < 12 * fs / grov):
         r2 = _fit_res(z, fs, survey_bw, near_hz, fin)
-        if r2 is not None:
+        if r2 is not None and r2[1] >= 2.5 * fs / fin:
             r = r2
     return r
 
@@ -317,12 +317,14 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft):
     # den uppmätta spridningen blir för stor när signalen täcker större delen av överblicken).
     m = max(1, N // nfft)
     sigma = 5.57 / math.sqrt(m)
-    floor = float(np.percentile(Pd, 10)) + 1.28 * sigma      # ≈ brusets median
+    p10, p20 = np.percentile(Pd, [10, 20])
+    # Om fönstret når ut i mottagarfiltrets stoppband (< -25 dB) så att 10:e percentilen faller ned i stupet, utgå från 20:e.
+    floor = float(p20 + 0.84 * sigma if float(Pd.min()) < p20 - 25.0 and p20 - p10 > 2.5 else p10 + 1.28 * sigma)
     thr = floor + max(3.0, 4.0 * sigma)
     c = len(f) // 2
     r = max(1, int(near_hz / res))
     k0 = max(0, c - r) + int(np.argmax(Pd[max(0, c - r):c + r + 1]))
-    if Pd[k0] < thr + 3:
+    if Pd[k0] < thr + 1.5:
         return None
     above = Pd > thr
     gap = max(2, int(round(max(250.0, survey_bw * 0.02) / res)))   # t.ex. hålet kring en AM-bärvåg
@@ -344,7 +346,7 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft):
             else:
                 miss += 1
                 if barvag:
-                    tillat = max(gap, int(0.2 * abs(last - k0)))
+                    tillat = max(gap, int(round(900.0 / res)), int(0.35 * abs(last - k0)))
                 else:
                     # utan bärvåg: luckan växer med signalen men högst 250 Hz – smala signaler tätt
                     # intill varandra (FT8, CW) ska inte slås ihop
@@ -354,10 +356,12 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft):
         return last
 
     a, b = edge(-1), edge(1)
+    if Pd[k0] < thr + 3 and b - a < 16:
+        return None
     # för smal överblick: signalen når kanten eller fyller nästan hela fönstret
     kant = a <= gap or b >= len(f) - 1 - gap or (b - a + 1) > 0.75 * len(f)
     dl, dr = float(f[k0] - f[a]), float(f[b] - f[k0])
-    if barvag and min(dl, dr) < 0.3 * max(dl, dr, 1e-9):
+    if barvag and min(dl, dr) < min(400.0, 0.3 * max(dl, dr, 1e-9)):
         barvag = False      # tonen ligger i kanten av signalen (FSK-ton), inte mitt i (AM-bärvåg)
     if barvag:
         # en AM-bärvåg är ensam: FSK har två (eller fler) nästan lika starka toner
@@ -486,6 +490,14 @@ def analyze(z, fs, bw):
     ex = np.where(strong, Pin - floor, 0.0)
     if peak_snr < 6 or ex.sum() <= 0:
         out["snr"] = peak_snr
+        if bw >= 1500 and peak_snr >= 3.5:
+            Z = np.fft.fft(z)
+            fz = np.fft.fftfreq(N, 1 / fs)
+            Z[np.abs(fz) > bw / 2] = 0
+            rm = _ramperiod(np.fft.ifft(Z).astype(np.complex64), fs, lo_ms=20.0, min_r=0.14)
+            if rm:
+                out.update(fam="LIN", klass=FAM_NAMN["LIN"], ram_ms=rm[0], ram_styrka=rm[1],
+                           occ_bw=bw * 0.8, f_mid=0.0)
         return out
     cs = np.cumsum(ex) / ex.sum()
     lo = float(fin[min(len(fin) - 1, int(np.searchsorted(cs, 0.005)))])
@@ -514,7 +526,7 @@ def analyze(z, fs, bw):
     low = sm < 0.35 * p95
     high = sm > 0.6 * p95
     fl, fh = float(low.mean()), float(high.mean())
-    onoff = fl > 0.12 and fh > 0.12 and fl + fh > 0.85
+    onoff = fl > 0.12 and fh > 0.12 and (fl + fh > 0.85 or (occ < 160 and fl > 0.25 and fl + fh > 0.70))
     on = high if onoff else np.ones(N, bool)
     out["skurar"] = onoff
     out["duty"] = fh
@@ -615,19 +627,30 @@ def analyze(z, fs, bw):
     # tal, RTTY och flertonsmodem (14–18 dB, 0,68–1,0) i analystest-klippen.
     # ojusterad cv: brusjusteringen (cv_c) blir för stor när SNR underskattas av grannsignaler i kanalen;
     # kravet på en stark symboltaktslinje skyddar mot rent brus
-    if car < 14 and cv > 0.15 and occ >= 600:
+    if car < 14 and car_frac < 0.25 and cv > 0.15 and occ >= 600:
         env2 = (a * a)[on] if onoff else a * a
         fb, sb = _line(env2.astype(np.float64), fs, 0.75 * occ, min(1.05 * occ, fs / 2.2))
         out["enkel_linje"] = (fb, sb)          # diagnostik (analystest)
         if fb and sb >= 19:
             single, ob = True, fb
             out["baud"], out["baud_styrka"] = float(fb), sb
+        elif occ >= 1200:
+            rm = _ramperiod(zf, fs, lo_ms=20.0, min_r=0.14)
+            if rm:
+                single = True
+                out["ram_ms"], out["ram_styrka"] = rm
+                if fb and sb >= 12:
+                    ob = fb
+                    out["baud"], out["baud_styrka"] = float(fb), sb
     out["enkelbarvag"] = single
-    if single:
+    if single and "ram_ms" not in out:
         rm = _ramperiod(zf, fs)
         if rm:
             out["ram_ms"], out["ram_styrka"] = rm
-            out["ram_sym"] = rm[0] * ob / 1000.0
+            if ob:
+                out["ram_sym"] = rm[0] * ob / 1000.0
+    elif single and ob and "ram_ms" in out:
+        out["ram_sym"] = out["ram_ms"] * ob / 1000.0
 
     # ── 7. Toner i spektrum (parallellmodem/MFSK) ──
     sel = (fin >= lo - res) & (fin <= hi + res)
@@ -673,10 +696,19 @@ def analyze(z, fs, bw):
             if lines[n][1] >= 18:
                 psk = nm
                 break
+    elif car < 14 and occ >= 35 and lines[2][1] >= 16 and lines[2][1] > car + 5 and cv_c >= 0.25:
+        # Smal BPSK (t.ex. PSK31/PSK63): undertryckt bärvåg vid f0 men stark linje i z² vid 2·f0
+        env2 = (a * a)[on] if onoff else a * a
+        fb_p, sb_p = _line(env2.astype(np.float64), fs, max(15.0, 0.4 * occ), min(1.05 * occ, fs / 2.2))
+        if fb_p and sb_p >= 12:
+            psk = "BPSK"
+            baud, bstr = float(fb_p), sb_p
+            out["baud"], out["baud_styrka"] = baud, bstr
+    fsk_cv = 0.50 if (nlev == 2 and trans < 0.12) else 0.35
     fsk_baud = None
-    if nlev >= 2 and shift and cv_c < 0.35 and not psk:
+    if nlev >= 2 and shift and cv_c < fsk_cv and not psk:
         fsk_baud = _fsk_baud(fi_v, fs, tones)
-    if onoff and narrow and cv_c < 0.3 and nlev <= 1:
+    if not psk and onoff and narrow and cv_c < 0.3 and nlev <= 1:
         fam = "OOK"
     elif narrow and cv_c < 0.2 and not onoff:
         fam = "BÄRVÅG"
@@ -686,8 +718,8 @@ def analyze(z, fs, bw):
         fam = psk
     elif single:
         fam = "LIN"                # en bärvåg med symboltakt – inte OFDM/AM/FM även om spektrumet rippar
-    elif nlev >= 2 and cv_c < 0.35 and shift and (nlev > 2 or trans < 0.18 or
-                                                  (fsk_baud and abs(shift / fsk_baud - 0.5) < 0.12)):
+    elif nlev >= 2 and cv_c < fsk_cv and shift and (nlev > 2 or trans < 0.18 or
+                                                    (fsk_baud and abs(shift / fsk_baud - 0.5) < 0.12)):
         if fsk_baud:
             baud, bstr = fsk_baud, max(bstr, 20.0)
             out["baud"], out["baud_styrka"] = baud, bstr
@@ -701,7 +733,7 @@ def analyze(z, fs, bw):
         # syll: tal har stavelser (2,2–3,5 dB i analystest), modem jämn effekt (< 0,7) – talets
         # grundton ger annars ett "tonraster" som ser ut som OFDM-bärvågor
         fam = "OFDM"
-    elif car >= 15 and cv_c > 0.06:
+    elif car >= 15 and cv_c > 0.06 and occ >= 1500 and out.get("spegel", 0) >= 0.35:
         fam = "AM"
     elif baud and bstr >= 14 and cv_c > 0.15 and syll < 1.5:
         fam = "LIN"
@@ -788,7 +820,6 @@ def lagbaud_mfsk(z, fs, f0=0.0):
     Fönster = en symbol: rätt läge ger EN ton per fönster, tonbyte ungefär varje symbol och högst M
     intilliggande toner. Returnerar dict(namn, baud, toner, renhet, ...) eller None."""
     z = np.asarray(z, np.complex64)
-    bast = None
     for namn, b, M, fam in LAGBAUD_MFSK:
         N = int(round(fs / b))
         if N < 8 or len(z) < 12 * N:
@@ -798,14 +829,13 @@ def lagbaud_mfsk(z, fs, f0=0.0):
         idx = np.arange(N)[None, :] + hop * np.arange(nfr)[:, None]
         X = np.fft.fft(z[idx] * np.hanning(N).astype(np.float32), axis=1)
         fr = np.fft.fftfreq(N, 1 / fs)
-        sel = np.abs(fr - f0) <= (M + 1.5) * b
-        if sel.sum() < M:
+        sel = np.flatnonzero(np.abs(fr - f0) <= (M + 1.5) * b)
+        sel = sel[np.argsort(fr[sel])]
+        if len(sel) < M:
             continue
         E = np.abs(X[:, sel]) ** 2
         tot = E.sum(axis=1) + 1e-30
-        aktiv = tot > 4 * np.median(tot) if np.median(tot) > 0 else tot > 0
-        if aktiv.sum() < 12:
-            aktiv = tot >= np.percentile(tot, 60)
+        aktiv = tot >= 0.25 * np.percentile(tot, 90)
         if aktiv.sum() < 12:
             continue
         pk = E.argmax(axis=1)
@@ -818,14 +848,15 @@ def lagbaud_mfsk(z, fs, f0=0.0):
         toner = int(np.count_nonzero(anv >= 0.03))
         spann = int(np.ptp(np.flatnonzero(anv >= 0.03)) + 1) if toner else 0
         # FT8/FT4 använder intilliggande toner (en per frekvenssteg) – 2-FSK med stort skift har två
-        # toner med ett tomt mellanrum och ska inte räknas (gav falsklarm på 50 Bd/200 Hz FSK och JT65)
+        # toner med ett tomt mellanrum och ska inte räknas (gav falsklarm på 50 Bd/200 Hz FSK och JT65).
+        # En enbärvågssignal (CW/PSK31) har > 85 % av fönstren i 1–2 fack och ska heller inte räknas.
         sammanhang = toner >= 0.75 * spann if spann else False
-        ok = (renhet >= 0.45 and 2.0 <= langd <= 7.0 and 3 <= toner <= M + 1 and spann <= M + 2
-              and sammanhang)
-        if ok and (bast is None or renhet > bast["renhet"]):
-            bast = dict(namn=namn, baud=b, toner=M, fam=fam, renhet=renhet, symbol_hopp=langd,
+        topp2 = float(np.sort(anv)[-2:].sum()) if len(anv) >= 2 else 1.0
+        if (renhet >= 0.45 and 2.0 <= langd <= 7.0 and 3 <= toner <= M + 1 and spann <= M + 2
+                and sammanhang and float(anv.max()) <= 0.65 and topp2 <= 0.85):
+            return dict(namn=namn, baud=b, toner=M, fam=fam, renhet=renhet, symbol_hopp=langd,
                         toner_sedda=toner)
-    return bast
+    return None
 
 
 def _fsk_baud(fi, fs, tones):
@@ -857,6 +888,8 @@ def _fsk_baud(fi, fs, tones):
     # finjustera kring vald takt
     near = [(e, T) for T, e in errs if bT * 0.88 <= T <= bT]
     bT = min(near)[1]
+    if bT < 0.7 * T0:
+        bT *= 2.0                  # 1,5 stoppbit i Baudot-RTTY ger halva symbollängder (1,5·T, 2,5·T)
     b0 = fs / bT
     imp = np.zeros(len(idx))
     imp[ch] = 1.0
@@ -1281,15 +1314,21 @@ class Analyzer:
             return feat
         ref = float(np.median(vals))
         lika = [x for x in vals if abs(x - ref) / ref < 0.015]
-        if len(lika) >= 3 and feat.get("fam") in ("LIN", "PSK8", "QPSK", "BPSK"):
-            feat["ram_ms"] = float(np.median(lika))
-            if not rm:
-                feat["ram_minne"] = True
+        if len(lika) >= 3:
+            if feat.get("fam") in ("FM", "BRUS", "SSB", "OKÄND"):
+                feat["fam"] = "LIN"
+                feat["klass"] = FAM_NAMN["LIN"]
+            if feat.get("fam") in ("LIN", "PSK8", "QPSK", "BPSK"):
+                feat["ram_ms"] = float(np.median(lika))
+                if not rm:
+                    feat["ram_minne"] = True
         return feat
 
     def _stabil_familj(self, feat):
         """Byter feat["fam"]/["klass"] till den stabila familjen (hysteres mot hopp mellan mätningar)."""
         raw = feat.get("fam")
+        if raw in ("FSK2", "FSK4", "MSK", "MFSK") and feat.get("shift"):
+            self._fsk_mem = (raw, feat.get("baud"), feat.get("shift"), feat.get("toner"))
         self._fam_hist.append(raw)
         most, cnt = Counter(self._fam_hist).most_common(1)[0]
         if most == "BRUS":
@@ -1301,6 +1340,14 @@ class Analyzer:
             feat["fam_ra"] = raw                  # det den senaste mätningen själv sa
             feat["fam"] = self._stable_fam
             feat["klass"] = FAM_NAMN.get(self._stable_fam, feat["klass"])
+            mem = getattr(self, "_fsk_mem", None)
+            if mem and mem[0] == self._stable_fam:
+                if not feat.get("baud") and mem[1]:
+                    feat["baud"] = mem[1]
+                if not feat.get("shift") and mem[2]:
+                    feat["shift"] = mem[2]
+                if not feat.get("toner") and mem[3]:
+                    feat["toner"] = mem[3]
         return feat
 
     def start(self):
@@ -1370,6 +1417,7 @@ class Analyzer:
         self._fam_hist.clear()
         self._stable_fam = None
         self._ram_hist.clear()
+        self._fsk_mem = None
 
     def _lock_candidate(self, feat, ks, now):
         """Lås visningen till en stabil signaltyp i stället för att listan hoppar mellan likvärdiga förslag."""

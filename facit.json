@@ -97,13 +97,16 @@
   "not": "Användarens exempel 2026-11-06 (osäker på typ). Identifierat: 2399,9 Bd, ramperiod 106,6 ms = 256 symboler (STANAG 4285)."
  },
  {
-  "namn": "AM-rundradio 7,125 MHz",
+  "namn": "SSB-tal 7,125 MHz LSB",
   "frekvens": 7125000,
   "fam": [
-   "AM"
+   "SSB"
   ],
-  "bredd": null,
-  "not": "Användaren 2026-11-06: AM-modulerat tal, svag/fädande bärvåg."
+  "bredd": [
+   1800,
+   3200
+  ],
+  "not": "40 m amatörradio (LSB) kring 7,125 MHz (tidigare felmärkt som AM-rundradio; saknar bärvåg och spegelsymmetri, ca 2,6 kHz enkel sidbandssignal)."
  },
  {
   "namn": "AM-rundradio 7,265 MHz (2)",
@@ -239,8 +242,8 @@
   "not": "Användarens exempel 2026-11-06. Bärvåg -237 Hz från 7.02220 MHz."
  },
  {
-  "namn": "CW 3,505 MHz",
-  "frekvens": 3504981,
+  "namn": "CW 3,5236 MHz",
+  "frekvens": 3523620,
   "fam": [
    "OOK"
   ],
@@ -248,7 +251,7 @@
    10.0,
    300.0
   ],
-  "not": "Användarens exempel 2026-11-06. Bärvåg -19 Hz från 3.50500 MHz."
+  "not": "80 m CW via SK2HG (kiwisdr.sk2hg.se:8073) på 3523,620 kHz."
  },
  {
   "namn": "FT8 3,573 MHz",
@@ -264,8 +267,8 @@
   "not": "Användarens tips 2026-11-06: mycket FT8/FT4 på 3570–3580 kHz. Målet är den starkaste signalen i klippet."
  },
  {
-  "namn": "FT4 3,5755 MHz",
-  "frekvens": 3578766,
+  "namn": "FT4 7,0475 MHz",
+  "frekvens": 7049300,
   "fam": [
    "FSK4",
    "MFSK"
@@ -275,7 +278,7 @@
    160
   ],
   "kandidat": "FT4",
-  "not": "Användarens tips 2026-11-06: mycket FT8/FT4 på 3570–3580 kHz. Målet är den starkaste signalen i klippet."
+  "not": "40 m FT4-bandet (7047,5 kHz USB) via Linköping-Kiwi: 4 toner × 20,83 Bd vid 7049,30 kHz, 4,5 s-skurar i 7,5 s-cykel."
  },
  {
   "namn": "SSB-tal 7,060 MHz",
@@ -306,8 +309,8 @@
   "not": "Användarens exempel 2026-11-06 via SK5SM. Svag (3–4 dB). Ramperiod 106,68 ms (r 0,16) uppmätt trots låg SNR."
  },
  {
-  "namn": "PSK31 14072,4 kHz",
-  "frekvens": 14072398,
+  "namn": "PSK31 14071,0 kHz",
+  "frekvens": 14070966,
   "fam": [
    "BPSK",
    "LIN"
@@ -316,7 +319,8 @@
    40,
    120
   ],
-  "not": "Användarens tips 2026-11-06 (PSK31 runt 14070). Signal på 14072,40 kHz via SK5SM: ca 60–90 Hz, tydlig z²-linje (BPSK)."
+  "kandidat": "PSK31",
+  "not": "20 m PSK31 via SK5SM på 14070,966 kHz: 31,25 Bd BPSK, avkodat 'DE WA1QZK NAME RON QTH 20 MI NE BOSTON MA .'"
  },
  {
   "namn": "STANAG 4285 12736,8 kHz",

@@ -109,6 +109,11 @@ SIGNALER = [
          f=HF, info="ARQ-protokoll, FSK 100/200 Bd 200 Hz shift."),
     dict(namn="DRM (digital rundradio)", kat="rundradio", mod=["OFDM"], baud=None, shift=None, toner=200,
          bw=10000, ljud=None, f=HF + [(0.15, 1.7)], info="OFDM med ~200 bärvågor, 9–10 kHz."),
+    dict(namn="AM-rundradio", kat="rundradio", mod=["AM"], baud=None, shift=None, toner=None, bw=9000,
+         ljud=None, f=[(0.148, 0.285), (0.52, 1.71), (2.3, 2.5), (3.2, 3.4), (3.9, 4.0), (4.75, 5.06),
+                       (5.85, 6.25), (7.2, 7.5), (9.35, 9.95), (11.55, 12.15), (13.55, 13.9),
+                       (15.05, 15.85), (17.45, 17.95), (21.45, 21.85), (25.65, 26.1)],
+         info="Rundradio med amplitudmodulering på lång-, mellan- och kortvåg (9 eller 10 kHz kanaldelning). Klartext."),
 
     # ── Personsökning / digital landmobil ────────────────────────────
     dict(namn="POCSAG", kat="kommersiell", mod=["FSK2", "FM"], baud=1200, shift=9000, toner=None, bw=12500,
@@ -134,7 +139,14 @@ SIGNALER = [
          ljud=None, f=[(3.5755, 3.5795), (7.0475, 7.0515), (10.14, 10.1440), (14.08, 14.0840), (18.104, 18.1080), (21.14, 21.1440), (24.919, 24.9230), (28.18, 28.1840), (50.318, 50.3220)],
          info="Amatörradio, 4-FSK 20,833 Bd med 20,833 Hz tonavstånd (ca 83 Hz brett), 7,5 s sändningsperioder – "
               "en snabbare FT8."),
-    dict(namn="Morse (CW)", kat="amatör", mod=["OOK"], baud=None, shift=None, toner=None, bw=150, ljud=None,
+    dict(namn="PSK31", kat="amatör", mod=["BPSK", "QPSK", "LIN"], baud=31.25, shift=None, toner=None, bw=63,
+         ljud=None, f=HF + [(50.0, 54.0), (144.0, 146.0)],
+         info="Amatörradio, fasmodulering (BPSK/QPSK) 31,25 Bd med varicode-alfabet, ca 60 Hz brett. "
+              "Vanlig kring 3,580, 7,040, 7,070 och 14,070 MHz. Klartext."),
+    dict(namn="PSK63", kat="amatör", mod=["BPSK", "QPSK", "LIN"], baud=62.5, shift=None, toner=None, bw=125,
+         ljud=None, f=HF + [(50.0, 54.0), (144.0, 146.0)],
+         info="Amatörradio, BPSK/QPSK 62,5 Bd (dubbla takten mot PSK31), ca 125 Hz brett. Klartext."),
+    dict(namn="Morse (CW)", kat="amatör", mod=["OOK"], baud=None, shift=None, toner=None, bw=100, ljud=None,
          f=[], info="Telegrafi med på/av-nycklad bärvåg. Klartext – avkodas här."),
     dict(namn="Omodulerad bärvåg", kat="kommersiell", mod=["BÄRVÅG"], baud=None, shift=None, toner=None, bw=50,
          ljud=None, f=[], info="Ren bärvåg – t.ex. fyr, störning, spur från dongeln eller en sändare i viloläge."),
@@ -243,7 +255,7 @@ def match(feat, freq_hz, db=None, audio_center=None, top=4):
                 continue           # helt fel bredd (t.ex. 9,5 kHz FM är inte 1,1 kHz väderfax)
             if 0.5 <= ratio <= 1.6:
                 s += 1
-            elif ratio > 3 or ratio < 0.25:
+            elif ratio > 2.5 or ratio < 0.4:
                 s -= 2
         if e.get("ljud") and audio_center is not None:
             smax += 2
