@@ -1,5 +1,9 @@
 # Ändringslogg
 
+## 2.8.1 (2026-11-06)
+
+- **Signalanalys:** bärvågens topp kapades i det lilla spektrumet. Skalan följde 99,5-percentilen, och en smal bärvåg ligger långt över den. Spektrumlinjen har nu en egen övre gräns som följer den högsta toppen: den stiger direkt och sjunker långsamt. Testat mot en riktig AM-sändning på 7,265 MHz via KiwiSDR.
+
 ## 2.8.0 (2026-11-06)
 
 - **Nytt namn: Signalspanaren** (tidigare Radiospanaren). Kommandot heter `signalspanaren`, och `radiospanaren` fungerar fortfarande. Inställningar, bokmärken, loggar, cache och inspelningsmappen flyttas automatiskt vid första start. Installationsskriptet tar bort den gamla installationen. Flatpak-ID:t är nu `se.eh.Signalspanaren`.

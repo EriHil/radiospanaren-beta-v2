@@ -29,7 +29,7 @@ import atexit
 
 APP_NAME = "Signalspanaren"
 APP_ID = "se.eh.Signalspanaren"
-VERSION = "2.8.0"
+VERSION = "2.8.1"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "signalspanaren")
@@ -3627,6 +3627,7 @@ def run_gui(args):
             self.fs = None
             self.bw = None
             self.lo_db, self.hi_db = None, None
+            self.top_db = None
             self.zoom = 1.0
             self.mouse = None
             self.set_draw_func(self.on_draw)
@@ -3648,7 +3649,7 @@ def run_gui(args):
         def clear(self):
             self.wf[:] = 0
             self.spec = None
-            self.lo_db = self.hi_db = None
+            self.lo_db = self.hi_db = self.top_db = None
             self.queue_draw()
 
         def push(self, db, fs, bw):
@@ -3656,6 +3657,7 @@ def run_gui(args):
                 self.wf[:] = 0
                 self.fs, self.bw = fs, bw
                 self.lo_db = None
+                self.top_db = None
             fl, pk = float(np.median(db)), float(np.percentile(db, 99.5))
             if self.lo_db is None:
                 self.lo_db, self.hi_db = fl - 4, max(pk, fl + 25)
@@ -3666,6 +3668,13 @@ def run_gui(args):
             self.wf[1:] = self.wf[:-1]
             self.wf[0] = q
             self.spec = db if self.spec is None else self.spec * 0.4 + db * 0.6
+            # spektrumlinjens tak: följer högsta toppen (en smal bärvåg ligger långt över 99,5-percentilen,
+            # som bara styr vattenfallets färger). Stiger direkt, sjunker långsamt så att skalan inte hoppar.
+            top = float(self.spec.max()) + 3
+            if self.lo_db is None or getattr(self, "top_db", None) is None or top > self.top_db:
+                self.top_db = top
+            else:
+                self.top_db = self.top_db * 0.97 + top * 0.03
 
         def span(self):
             if not self.fs:
@@ -3727,8 +3736,9 @@ def run_gui(args):
             cr.fill()
             if self.spec is not None:
                 v = self.spec[cols]
-                rng = max(1.0, self.hi_db - self.lo_db + 6)
-                yv = np.clip((self.hi_db + 3 - v) / rng, 0, 1) * spec_h
+                top = max(self.hi_db + 3, self.top_db if self.top_db is not None else -1e9)
+                rng = max(1.0, top - (self.lo_db - 3))
+                yv = np.clip((top - v) / rng, 0, 1) * spec_h
                 cr.move_to(0, spec_h)
                 for i in range(W):
                     cr.line_to(i, yv[i])
