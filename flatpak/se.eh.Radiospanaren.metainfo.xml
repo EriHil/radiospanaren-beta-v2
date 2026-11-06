@@ -42,6 +42,16 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.5.0" date="2026-11-06">
+      <description>
+        <p>KiwiSDR som mottagarkälla: hämtar I/Q från webb-SDR:er på nätet
+           (0–30 MHz). Sedan 2.1.1 har även tillkommit: fliken Signalanalys
+           med signaldatabas, avkodare för RTTY, Morse, NAVTEX, POCSAG,
+           ALE 2G, väderfax och DMR-identifiering, IQ-inspelning och
+           uppspelning, samt asynkron läsning av RTL-SDR (inga tappade
+           sampel).</p>
+      </description>
+    </release>
     <release version="2.1.1" date="2026-11-05">
       <description>
         <p>Flatpak med GNOME 51-körtid (GTK 4.24, Python 3.14, libshumate
