@@ -219,6 +219,14 @@ CW_TONE = 700.0
 
 MODES = ["WFM", "NFM", "AM", "USB", "LSB", "CW"]
 DEFAULT_BW = {"WFM": 180000, "NFM": 12500, "AM": 8000, "USB": 2700, "LSB": 2700, "CW": 500}
+FILTER_STEPS = {
+    "WFM": [50000, 100000, 150000, 180000, 200000, 250000],
+    "NFM": [5000, 7500, 10000, 12500, 15000, 20000, 25000],
+    "AM": [2400, 3000, 4000, 6000, 8000, 10000, 12000, 15000],
+    "USB": [1500, 1800, 2100, 2400, 2700, 3000, 3300],
+    "LSB": [1500, 1800, 2100, 2400, 2700, 3000, 3300],
+    "CW": [250, 500, 750, 1000, 1500, 2400],
+}
 DEFAULT_STEP = {"WFM": 100000, "NFM": 12500, "AM": 5000, "USB": 100, "LSB": 100, "CW": 10}
 STEPS = [0, 10, 100, 1000, 5000, 9000, 10000, 12500, 25000, 100000]
 STEP_NAMES = ["Auto", "10 Hz", "100 Hz", "1 kHz", "5 kHz", "9 kHz", "10 kHz", "12,5 kHz", "25 kHz", "100 kHz"]
@@ -3568,12 +3576,12 @@ def run_gui(args):
 
     class MiniWaterfall(Gtk.DrawingArea):
         """Litet vattenfall som täcker den analyserade kanalen."""
-        ROWS = 220
+        ROWS = 320
 
         def __init__(self, panel):
             super().__init__(hexpand=True, vexpand=True)
             self.panel = panel
-            self.set_size_request(260, 90)
+            self.set_size_request(360, 130)
             self.wf = np.zeros((self.ROWS, analys.ChannelTap.WF_N), np.uint8)
             self.spec = None
             self.fs = None
@@ -3612,12 +3620,12 @@ def run_gui(args):
             if self.lo_db is None:
                 self.lo_db, self.hi_db = fl - 4, max(pk, fl + 25)
             else:
-                self.lo_db = self.lo_db * 0.95 + (fl - 4) * 0.05
-                self.hi_db = self.hi_db * 0.95 + max(pk, fl + 25) * 0.05
+                self.lo_db = self.lo_db * 0.85 + (fl - 4) * 0.15
+                self.hi_db = self.hi_db * 0.85 + max(pk, fl + 25) * 0.15
             q = np.clip((db - self.lo_db) * (255.0 / max(1.0, self.hi_db - self.lo_db)), 0, 255).astype(np.uint8)
             self.wf[1:] = self.wf[:-1]
             self.wf[0] = q
-            self.spec = db if self.spec is None else self.spec * 0.6 + db * 0.4
+            self.spec = db if self.spec is None else self.spec * 0.4 + db * 0.6
 
         def span(self):
             if not self.fs:
@@ -3670,7 +3678,7 @@ def run_gui(args):
             cr.translate(0, wf_y)
             cr.scale(1, wf_h / rows)
             cr.set_source_surface(surf, 0, 0)
-            cr.get_source().set_filter(cairo.FILTER_NEAREST)
+            cr.get_source().set_filter(cairo.FILTER_BILINEAR)
             cr.paint()
             cr.restore()
             # spektrum
@@ -4418,6 +4426,7 @@ def run_gui(args):
             e.analyzer = self.analyzer
             self.analyzer.start()
             self.an_win = None
+            self.panel_win = None
             e.center = self.wf_center
             e.offset = self.freq - e.center
 
@@ -4432,7 +4441,26 @@ def run_gui(args):
             self.outer = outer
             right = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
             self.view = SpectrumView(self)
-            right.set_start_child(self.view)
+            overlay = Gtk.Overlay()
+            overlay.set_child(self.view)
+            ctrls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+            ctrls.add_css_class("wf-controls")
+            ctrls.set_halign(Gtk.Align.END)
+            ctrls.set_valign(Gtk.Align.END)
+            ctrls.set_margin_end(8)
+            ctrls.set_margin_bottom(8)
+            def _btn(label, tip, cb):
+                b = Gtk.Button(label=label)
+                b.set_tooltip_text(tip)
+                b.connect("clicked", lambda *_: cb())
+                return b
+            ctrls.append(_btn("−", "Zooma ut i vattenfallet", lambda: self.zoom_spectrum(0.5)))
+            ctrls.append(_btn("1:1", "Återställ zoom", lambda: self.zoom_spectrum(0)))
+            ctrls.append(_btn("+", "Zooma in i vattenfallet", lambda: self.zoom_spectrum(2)))
+            ctrls.append(_btn("◀", "Flytta spektrumet åt vänster", lambda: self.pan_spectrum(-1)))
+            ctrls.append(_btn("▶", "Flytta spektrumet åt höger", lambda: self.pan_spectrum(1)))
+            overlay.add_overlay(ctrls)
+            right.set_start_child(overlay)
             right.set_end_child(self._build_bottom())
             right.set_position(int(h * 0.62))
             self.right_paned = right
@@ -4455,6 +4483,8 @@ def run_gui(args):
                 GLib.idle_add(self._start_web)
             if args.start or args.skanna:
                 GLib.idle_add(lambda: self.btn_start.set_active(True) or False)
+            if getattr(args, "panel", None):
+                GLib.timeout_add(700, lambda: self._open_frontpanel(args.panel) or False)
             if args.kalibrera:
                 GLib.timeout_add(900, lambda: self._open_calibration() or False)
             if args.aktivitetskarta:
@@ -4603,7 +4633,8 @@ def run_gui(args):
             self.kiwi_row.connect("apply", lambda r: self._set_conf("kiwi_addr", r.get_text().strip()))
             g.add(self.kiwi_row)
             self._button(g, "🌐 Webbmottagare på nätet (KiwiSDR, OpenWebRX, WebSDR) …", self._open_webrx)
-            self.hw_rows = [self._switch(g, "Automatisk förstärkning", c["auto_gain"], self._on_auto_gain)]
+            self.agc_row = self._switch(g, "Automatisk förstärkning", c["auto_gain"], self._on_auto_gain)
+            self.hw_rows = [self.agc_row]
             self.gain_row = self._spin(g, "Förstärkning (dB)", 0, 49.6, 0.5, c["gain"], 1, self._on_gain)
             self.gain_row.set_sensitive(not c["auto_gain"])
             self.ppm_row = self._spin(g, "Frekvenskorrigering (ppm)", -200, 200, 1, c["ppm"], 0, self._on_ppm)
@@ -4651,8 +4682,9 @@ def run_gui(args):
             self.bw_row = self._spin(g, "Bandbredd (Hz)", 100, 250000, 100, self.engine.bw, 0, self._on_bw)
             self.sq_row = self._spin(g, "Squelch (dB)", -150, 0, 1, c["squelch"], 0, self._on_squelch,
                                      "-150 = alltid öppen")
-            self._spin(g, "Volym (%)", 0, 300, 5, c["volume"], 0, self._on_volume)
-            self._combo(g, "Frekvenssteg", STEP_NAMES, c["step_idx"], lambda i: self._set_conf("step_idx", i))
+            self.vol_row = self._spin(g, "Volym (%)", 0, 300, 5, c["volume"], 0, self._on_volume)
+            self.step_row = self._combo(g, "Frekvenssteg", STEP_NAMES, c["step_idx"],
+                                        lambda i: self._set_conf("step_idx", i))
             box.append(g)
 
             g = self._section("Visning")
@@ -4672,8 +4704,15 @@ def run_gui(args):
                         self._on_colormap)
             box.append(g)
 
+            g = self._section("Frontpanel", "Riktiga reglage och displayer som styr mottagaren")
+            self._button(g, "🎛 Mottagare 1 – stor mottagare …", lambda: self._open_frontpanel("r9500"))
+            self._button(g, "🎛 Mottagare 2 – klassisk mottagare …", lambda: self._open_frontpanel("r7100"))
+            self._button(g, "🎛 Mottagare 3 – skannerpanel …", lambda: self._open_frontpanel("r2500"))
+            box.append(g)
+
             g = self._section("Skanner")
-            self._combo(g, "Skanna", ["Bokmärken", "Frekvensintervall"], c["scan_mode"], self._on_scan_mode)
+            self.scan_mode_row = self._combo(g, "Skanna", ["Bokmärken", "Frekvensintervall"],
+                                             c["scan_mode"], self._on_scan_mode)
             self.scan_group_row = Adw.ComboRow(title="Bokmärken att skanna")
             self.scan_group_row.connect("notify::selected", lambda r, _p: self._on_scan_group(r.get_selected()))
             g.add(self.scan_group_row)
@@ -5119,6 +5158,25 @@ def run_gui(args):
             self.conf["zoom"] = max(1, int(z))
             if int(self.zoom_row.get_value()) != self.conf["zoom"]:
                 self.zoom_row.set_value(self.conf["zoom"])
+            self.view.queue_draw()
+
+        def zoom_spectrum(self, factor):
+            """factor > 1 zoomar in, < 1 zoomar ut, 0 återställer."""
+            if factor == 0:
+                self.set_zoom(1)
+                return
+            z = self.conf["zoom"]
+            z = min(128, z * 2) if factor > 1 else max(1, z // 2)
+            self.set_zoom(z)
+
+        def pan_spectrum(self, direction):
+            """Flytta visat frekvensområde åt vänster/höger (direction = -1/1)."""
+            z = max(1, int(self.conf.get("zoom", 1)))
+            span = SR / z
+            try:
+                self.set_center_keep(self.engine.center + direction * span * 0.25)
+            except Exception:
+                pass
             self.view.queue_draw()
 
         def auto_level(self):
@@ -6085,6 +6143,24 @@ def run_gui(args):
             if not self.engine.running:
                 self.toast("Starta mottagningen, välj band och tryck ▶ Svep")
 
+        # ── frontpanel ──
+        def _open_frontpanel(self, model="r9500"):
+            try:
+                import frontpanel
+            except Exception as ex:
+                log.exception("Kunde inte ladda frontpanelen")
+                self.toast(f"Kunde inte ladda frontpanelen: {ex}")
+                return
+            try:
+                if self.panel_win is None:
+                    self.panel_win = frontpanel.FrontPanel(self, model)
+                else:
+                    self.panel_win.set_model(model)
+                self.panel_win.present()
+            except Exception as ex:
+                log.exception("Kunde inte öppna frontpanelen")
+                self.toast(f"Kunde inte öppna frontpanelen: {ex}")
+
         # ── webbmottagare ──
         def _open_webrx(self):
             try:
@@ -6335,6 +6411,183 @@ def run_gui(args):
             self._refresh_scan_lists()
             save_conf(self.conf)
 
+        # ── frontpanel ──
+        def panel_set_volume(self, v):
+            v = max(0.0, min(300.0, float(v)))
+            self._on_volume(v)
+            if hasattr(self, "vol_row"):
+                self.vol_row.set_value(v)
+
+        def panel_set_squelch(self, v):
+            v = max(-150.0, min(0.0, float(v)))
+            self._on_squelch(v)
+            self.sq_row.set_value(v)
+
+        def panel_set_gain(self, v):
+            v = max(0.0, min(49.6, float(v)))
+            if self.conf.get("auto_gain"):
+                self.agc_row.set_active(False)          # stänger av AGC, slår på manuell förstärkning
+            self._on_gain(v)
+            self.gain_row.set_value(v)
+
+        def panel_toggle_agc(self):
+            v = not bool(self.conf.get("auto_gain"))
+            self.agc_row.set_active(v)
+            self.toast("Automatisk förstärkning på" if v else "Manuell förstärkning")
+            return v
+
+        def panel_step(self, d):
+            self.conf["step_idx"] = (int(self.conf.get("step_idx", 0)) + int(d)) % len(STEPS)
+            if hasattr(self, "step_row"):
+                self.step_row.set_selected(self.conf["step_idx"])
+            self.toast(f"Frekvenssteg: {STEP_NAMES[self.conf['step_idx']]}")
+
+        def panel_bw_step(self, d):
+            e = self.engine
+            lst = FILTER_STEPS.get(e.mode, FILTER_STEPS["AM"])
+            i = min(range(len(lst)), key=lambda k: abs(lst[k] - float(e.bw)))
+            i = max(0, min(len(lst) - 1, i + int(d)))
+            e.bw = float(lst[i])
+            self.conf["bw"] = float(lst[i])
+            self._updating = True
+            self.bw_row.set_value(e.bw)
+            self._updating = False
+            self.view.queue_draw()
+            self.toast(f"Bandbredd: {fmt_bw(e.bw)}")
+
+        def panel_store_bookmark(self):
+            bm = {"name": f"{fmt_mhz(self.freq)} MHz {self.engine.mode}",
+                  "freq": self.freq, "mode": self.engine.mode}
+            self.conf["bookmarks"].append(bm)
+            self._panel_bm = len(self.conf["bookmarks"]) - 1
+            self._load_bookmarks()
+            self._refresh_scan_lists()
+            save_conf(self.conf)
+            self.toast(f"Bokmärke sparat: {bm['name']}")
+
+        def panel_recall_bookmark(self, d=1):
+            bms = self.conf.get("bookmarks", [])
+            if not bms:
+                self.toast("Inga bokmärken sparade")
+                return
+            self._panel_bm = (getattr(self, "_panel_bm", -1) + int(d)) % len(bms)
+            bm = bms[self._panel_bm]
+            self.tune(bm["freq"], bm.get("mode"))
+            self.toast(f"Bokmärke {self._panel_bm + 1}/{len(bms)}: {bm['name']}")
+
+        def panel_clear_bookmark(self):
+            bms = self.conf.get("bookmarks", [])
+            if not bms:
+                self.toast("Inga bokmärken att ta bort")
+                return
+            bm = bms.pop()
+            self._load_bookmarks()
+            self._refresh_scan_lists()
+            save_conf(self.conf)
+            self.toast(f"Tog bort bokmärket {bm['name']}")
+
+        def panel_band_name(self, hz):
+            return band_name(hz)
+
+        def panel_band_step(self, d):
+            bands = sorted({(lo, hi, name) for lo, hi, name in BANDPLAN})
+            if not bands:
+                return
+            if d > 0:
+                nxt = [b for b in bands if b[0] * 1e6 > self.freq + 1000]
+                lo, hi, name = min(nxt, key=lambda b: b[0]) if nxt else bands[0]
+            else:
+                prv = [b for b in bands if b[1] * 1e6 < self.freq - 1000]
+                lo, hi, name = max(prv, key=lambda b: b[1]) if prv else bands[-1]
+            self.tune((lo + hi) / 2 * 1e6)
+            self.toast(f"{name} ({lo:g}–{hi:g} MHz)")
+
+        def panel_dwell_cycle(self):
+            vals = [100, 200, 300, 500, 800, 1200, 2000]
+            cur = int(self.conf.get("scan_dwell_ms", 300))
+            nxt = next((v for v in vals if v > cur), vals[0])
+            self.conf["scan_dwell_ms"] = nxt
+            if self.scanner.active:
+                self.scanner.dwell = nxt / 1000.0 + (0.5 if self.scanner._kiwi() else 0.0)
+                self.scanner.need = max(3, int(nxt / 1000.0 / (BLOCK / SR)))
+            self.toast(f"Tid per skanningsfönster: {nxt} ms")
+
+        def panel_toggle_rec(self):
+            self.btn_rec.set_active(not self.btn_rec.get_active())
+
+        def _restart_scan_later(self):
+            if not self.scanner.active:
+                return
+            self.scanner.stop()
+            self.scan_btn.set_title("Starta skanning")
+
+            def again():
+                if self.scanner.start():
+                    self.scan_btn.set_title("Stoppa skanning")
+                return False
+            GLib.timeout_add(500, again)
+
+        def panel_scan_toggle(self):
+            if self.scanner.active:
+                self._toggle_scan()
+                return
+            if not self.engine.running:
+                self.btn_start.set_active(True)
+                self.toast("Startar mottagningen – skanningen börjar strax")
+
+                def go():
+                    if self.engine.running and not self.scanner.active:
+                        self._toggle_scan()
+                    return False
+                GLib.timeout_add(900, go)
+                return
+            self._toggle_scan()
+
+        def panel_scan_mode(self, i):
+            i = 1 if int(i) else 0
+            self.conf["scan_mode"] = i
+            if hasattr(self, "scan_mode_row"):
+                self.scan_mode_row.set_selected(i)
+            self._restart_scan_later()
+            self.toast("Skannar " + ("frekvensintervall" if i else "bokmärken"))
+
+        def panel_scan_group(self, d=1):
+            self._refresh_scan_lists()
+            vals = getattr(self, "_scan_group_vals", [""])
+            cur = self.conf.get("scan_group", "")
+            i = vals.index(cur) if cur in vals else 0
+            i = (i + int(d)) % len(vals)
+            self.conf["scan_group"] = vals[i]
+            self.scan_group_row.set_selected(i)
+            self._restart_scan_later()
+            self.toast("Skanningsgrupp: " + (vals[i] or "alla bokmärken"))
+
+        def panel_scan_range(self, kind, value):
+            key = "scan_start" if kind == "start" else "scan_stop"
+            text = f"{float(value):g}"
+            row = self.scan_entries.get(key)
+            if row is not None:
+                row.set_text(text)                  # triggar _set_conf via "changed"
+            else:
+                self.conf[key] = text
+            if self.scanner.active:
+                self._restart_scan_later()
+
+        def panel_scan_conf(self, key, value):
+            self.conf[key] = value
+            s = self.scanner
+            if not s.active:
+                return
+            if key == "scan_hold":
+                s.hold = float(value)
+            elif key == "scan_dwell_ms":
+                s.dwell = float(value) / 1000.0 + (0.5 if s._kiwi() else 0.0)
+                s.need = max(3, int(float(value) / 1000.0 / (BLOCK / SR)))
+            elif key == "scan_snr":
+                s.thr = float(value)
+            elif key == "scan_step_khz":
+                s.chstep = max(100.0, float(value) * 1000)
+
         # ── felsökning ──
         def copy_report(self):
             e = self.engine
@@ -6352,7 +6605,8 @@ def run_gui(args):
             """Renderar fönstret till en PNG-fil (fungerar även under Wayland)."""
             try:
                 win = self
-                for w in (getattr(self, "webrx_win", None), getattr(self, "activity_win", None), getattr(self, "ship_win", None),
+                for w in (getattr(self, "panel_win", None), getattr(self, "webrx_win", None),
+                          getattr(self, "activity_win", None), getattr(self, "ship_win", None),
                           getattr(self, "an_win", None)):
                     if w is not None and w.get_visible():
                         win = w
@@ -6467,6 +6721,9 @@ def run_gui(args):
 
         def _on_close(self, *_):
             try:
+                if self.panel_win is not None:
+                    self.panel_win.close()
+                    self.panel_win = None
                 self.conf["window"] = [self.get_width(), self.get_height()]
                 self.conf["sidebar_width"] = self.outer.get_position()
                 if self.ship_win is not None:
@@ -6530,6 +6787,9 @@ def run_gui(args):
             if w is not None and w.engine.running:
                 log.info("Avslutar – stoppar mottagningen")
                 try:
+                    if w.panel_win is not None:
+                        w.panel_win.close()
+                        w.panel_win = None
                     w.scanner.stop()
                     w.engine.stop()
                     w.audio.stop()
@@ -6544,7 +6804,10 @@ def run_gui(args):
             css = Gtk.CssProvider()
             css.load_from_string(".freq-entry { font-family: monospace; font-size: 16pt; font-weight: bold; "
                                  "color: #7fe0d0; } .map-label { background: rgba(0,0,0,0.65); color: white; "
-                                 "border-radius: 4px; padding: 0 3px; font-size: 8pt; font-weight: bold; }")
+                                 "border-radius: 4px; padding: 0 3px; font-size: 8pt; font-weight: bold; } "
+                                 ".wf-controls { background: rgba(0,0,0,0.55); border-radius: 6px; padding: 2px; } "
+                                 ".wf-controls button { min-width: 28px; min-height: 22px; padding: 0 4px; "
+                                 "font-size: 11pt; }")
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css,
                                                       Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             if os.path.exists(CSS_FILE):
@@ -6960,6 +7223,8 @@ def main():
     p.add_argument("--analysera", metavar="FREKVENS",
                    help="analysera signalen på FREKVENS i fliken Signalanalys (t.ex. 99.77 eller 14074k)")
     p.add_argument("--flik", choices=["signallogg", "bokmarken", "skanner", "avkodat", "analys"], help="flik att visa längst ner")
+    p.add_argument("--panel", nargs="?", const="r9500", choices=["r9500", "r7100", "r2500"],
+                   help="öppna frontpanelen direkt (r9500, r7100 eller r2500)")
     p.add_argument("--skarmbild", nargs=2, metavar=("FIL", "SEKUNDER"),
                    help="spara en skärmbild av fönstret (PNG) efter angivet antal sekunder")
     p.add_argument("--debug", action="store_true", help="detaljerad loggning, även i terminalen")

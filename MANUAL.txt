@@ -87,6 +87,7 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
                                     (utan fönster). Ska sluta med "OK".
   radiospanaren --sokvagar          Visa var alla filer ligger
   radiospanaren --skarmbild FIL 10  Spara en skärmbild av fönstret efter 10 s
+  radiospanaren --panel r9500        Öppna frontpanelen direkt (r9500, r7100, r2500)
   radiospanaren --rensa-logg        Töm loggfilerna
   radiospanaren --aterstall         Återställ alla inställningar
                                     (gamla sparas som config.json.bak)
@@ -274,6 +275,24 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
   Visning → Utseende: "Spanare" (mörk marin med bärnstensfärgade detaljer och
   ny färgskala) eller "Klassisk". Tema: mörkt, ljust eller följ systemet.
   Egen CSS kan läggas i ~/.config/radiospanaren/style.css.
+
+ Frontpaneler
+  Sidopanelen → "Frontpanel" har tre val: Mottagare 1, 2 och 3.
+  Frontpanelerna är riktiga reglage som styr den körande mottagaren direkt:
+  rattar, huvudratt, siffertangentbord, läges-/filter-/stegknappar,
+  bokmärken, skanning, inspelning, lås, dimmer och monitor.
+  Mottagare 1 och 2 är fullständiga mottagarpaneler (med skop).
+  Skannerpanelen (Mottagare 3) är avsiktligt begränsad till skannern: SCAN, SKIP, grupp,
+  skanningsläge, intervall, träfflista, DWELL/HOLD/TRÖSKEL och strömbrytare.
+  Siffertangentbordet på skannerpanelen matar in START (MHz), STOPP (MHz) eller
+  STEG (kHz) beroende på vilken av START/STOPP/STEG som är vald; tryck ENT
+  för att verkställa. Att klicka på en träff i träfflistan stoppar skanningen
+  och ställer in frekvensen.
+  Reglage som saknar motsvarande funktion i programmet (PBT, notch, NB, APF,
+  tal osv.) är utelämnade.
+  Tips: huvudratten stegar ett frekvenssteg; tryck tangenten "MHz" (R7100)
+  för att stega 1 MHz. MONI öppnar squelchen så länge du håller knappen.
+  LOCK låser alla reglage; DIMMER växlar mellan tre belysningslägen.
 
  Kalibrera frekvensen (ppm)
   Mottagare → "Kalibrera frekvens (ppm) …" mäter dongelns frekvensfel mot en
