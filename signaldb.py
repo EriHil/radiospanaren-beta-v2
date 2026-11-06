@@ -131,6 +131,11 @@ SIGNALER = [
                        (50.313, 50.316), (144.174, 144.177)],
          info="Amatörradio, 8-FSK 6,25 Bd med 6,25 Hz tonavstånd (ca 50 Hz brett), 15 s sändningsperioder. "
               "Många signaler sida vid sida på standardfrekvenserna (USB 7,074 m.fl.)."),
+    dict(namn="FT4", kat="amatör", mod=["FSK4", "MFSK"], baud=20.833, shift=20.833, toner=4, bw=83,
+         ljud=None, f=[(3.5755, 3.5785), (7.0475, 7.0505), (10.140, 10.143), (14.080, 14.083), (18.104, 18.107),
+                       (21.140, 21.143), (24.919, 24.922), (28.180, 28.183), (50.318, 50.321)],
+         info="Amatörradio, 4-FSK 20,833 Bd med 20,833 Hz tonavstånd (ca 83 Hz brett), 7,5 s sändningsperioder – "
+              "en snabbare FT8."),
     dict(namn="Morse (CW)", kat="amatör", mod=["OOK"], baud=None, shift=None, toner=None, bw=150, ljud=None,
          f=[], info="Telegrafi med på/av-nycklad bärvåg. Klartext – avkodas här."),
     dict(namn="Omodulerad bärvåg", kat="kommersiell", mod=["BÄRVÅG"], baud=None, shift=None, toner=None, bw=50,

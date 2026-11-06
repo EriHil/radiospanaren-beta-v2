@@ -333,7 +333,7 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft):
     topp_bredd = np.count_nonzero(Pd[max(0, k0 - nb):k0 + nb + 1] > Pd[k0] - 6) * res
     # bärvågens andel av effekten inom ±2 kHz (oberoende av upplösningen): AM ≈ 0,8–0,95
     andel = float(P[max(0, k0 - 2):k0 + 3].sum()) / (float(omg.sum()) + 1e-30)
-    barvag = topp_bredd < 150 and andel >= 0.3
+    barvag = topp_bredd < 150 and andel >= 0.3 and _spegel(Pd, res, k0) >= 0.45
 
     def edge(step):
         k, last, miss = k0, k0, 0
@@ -348,7 +348,7 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft):
                 else:
                     # utan bärvåg: luckan växer med signalen men högst 250 Hz – smala signaler tätt
                     # intill varandra (FT8, CW) ska inte slås ihop
-                    tillat = min(gap, max(2, int(round(60.0 / res)), int(0.15 * abs(last - k0))))
+                    tillat = min(gap, max(2, int(round(20.0 / res)), int(0.15 * abs(last - k0))))
                 if miss > tillat:
                     break
         return last
@@ -370,9 +370,49 @@ def _fit_res(z, fs, survey_bw, near_hz, nfft):
         # har ofta ett hål i talet), men inte bredare än vad som ryms i överblicken
         half = max(float(f[k0] - f[a]), float(f[b] - f[k0])) + res / 2
         return float(f[k0]), 2 * half, kant
+    a, b = _narrow_peak(Pd, res, a, b, k0)
     a, b = _split_valleys(Pd, res, a, b, k0, thr)
     lo, hi = float(f[a]) - res / 2, float(f[b]) + res / 2
     return (lo + hi) / 2, hi - lo, kant
+
+
+def _narrow_peak(Pd, res, a, b, k0, ner=20.0, smal_hz=150.0):
+    """Smal signal tätt bland andra (FT8/FT4 bredvid varandra, CW): toppen inom 10 dB är smal – då slutar
+    signalen där nivån fallit `ner` dB under toppen. Inte om en annan topp är nästan lika stark (FSK-toner)."""
+    l = k0
+    while l > a and Pd[l - 1] > Pd[k0] - 10:
+        l -= 1
+    r = k0
+    while r < b and Pd[r + 1] > Pd[k0] - 10:
+        r += 1
+    if (r - l + 1) * res >= smal_hz:
+        return a, b
+    if _spegel(Pd, res, k0) >= 0.3:
+        return a, b                    # spegelsymmetriskt kring toppen: AM-bärvåg med sidband
+    w = max(2, int(round(600.0 / res)))
+    near = np.r_[Pd[max(a, l - w):l], Pd[r + 1:min(b, r + w) + 1]]
+    if len(near) and float(near.max()) > Pd[k0] - 15:
+        return a, b                    # en till nästan lika stark ton (FSK, även fädad): låt den vara
+    i = l
+    while i > a and Pd[i - 1] > Pd[k0] - ner:
+        i -= 1
+    j = r
+    while j < b and Pd[j + 1] > Pd[k0] - ner:
+        j += 1
+    return i, j
+
+
+def _spegel(Pd, res, k, lo_hz=150.0, hi_hz=3000.0):
+    """Hur lika spektrumet är på båda sidor om bin k (korrelation −1…1). AM:s sidband är spegelbilder
+    av varandra (uppmätt +0,6…0,76 på riktiga AM-sändningar), FT8/CW/FSK nära 0."""
+    d = np.arange(max(1, int(lo_hz / res)), int(hi_hz / res))
+    d = d[(k - d >= 0) & (k + d < len(Pd))]
+    if len(d) < 6:
+        return 0.0
+    a_, b_ = Pd[k - d], Pd[k + d]
+    if a_.std() < 1e-6 or b_.std() < 1e-6:
+        return 0.0
+    return float(np.corrcoef(a_, b_)[0, 1])
 
 
 def _split_valleys(Pd, res, a, b, k0, thr, djup=10.0, sida_hz=600.0):
@@ -559,6 +599,7 @@ def analyze(z, fs, bw):
             car_p = float(Pin[max(0, kc - 2):kc + 3].sum())
             tot = float(Pin[(fin >= lo - res) & (fin <= hi + res)].sum()) + 1e-30
             car_frac, car_f = car_p / tot, float(fin[kc])
+            out["spegel"] = _spegel(10 * np.log10(Pin + 1e-30), res, kc)
     out["barvag_andel"] = car_frac
     # Symboltakten för pulsformad PSK/QAM ligger nära bandbredden (bw ≈ baud·(1+β), dvs baud ≈ 0,7–0,95·bw),
     # så den söks just där. Linjer kring 0,5·bw kommer från ljud/toner (tal, FSK, flertonsmodem) – uppmätt
@@ -633,7 +674,7 @@ def analyze(z, fs, bw):
         fam = "OOK"
     elif narrow and cv_c < 0.2 and not onoff:
         fam = "BÄRVÅG"
-    elif car_frac >= 0.4 and cv_c > 0.06 and not narrow:
+    elif car_frac >= 0.4 and cv_c > 0.06 and not narrow and out.get("spegel", 0) >= 0.45:
         fam = "AM"                 # bärvågen bär större delen av effekten (OFDM-piloter: några procent)
     elif psk:
         fam = psk
@@ -650,11 +691,13 @@ def analyze(z, fs, bw):
             fam = "FSK4"
         else:
             fam = "MFSK"
-    elif ntones >= 6 and regular and cv_c > 0.3:
+    elif ntones >= 6 and regular and cv_c > 0.3 and syll < 1.5:
+        # syll: tal har stavelser (2,2–3,5 dB i analystest), modem jämn effekt (< 0,7) – talets
+        # grundton ger annars ett "tonraster" som ser ut som OFDM-bärvågor
         fam = "OFDM"
     elif car >= 15 and cv_c > 0.06:
         fam = "AM"
-    elif baud and bstr >= 14 and cv_c > 0.15:
+    elif baud and bstr >= 14 and cv_c > 0.15 and syll < 1.5:
         fam = "LIN"
     elif cv_c < 0.3 and dev > max(3 * res, 0.08 * occ):
         fam = "FM"
@@ -1217,6 +1260,9 @@ class Analyzer:
             ft["survey"] = min(ft["cap"], ft["survey"] * 3.0)      # signalen är bredare än överblicken
             self.tap.set_target(tgt, ft["survey"])
             log.info("Signalanalys: bredare överblick %.0f Hz", ft["survey"])
+            return True
+        if r is None and ft["tries"] < self.FIT_MAX_TRIES:
+            self.tap.set_target(tgt, ft["survey"])        # ingen signal just nu (paus i en skur) – försök igen
             return True
         if r is None:
             new_f, new_bw = tgt, float(np.clip(ft["guess"] * 1.35, 400.0, ft["cap"]))

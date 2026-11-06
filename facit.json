@@ -249,5 +249,44 @@
    300.0
   ],
   "not": "Användarens exempel 2026-11-06. Bärvåg -19 Hz från 3.50500 MHz."
+ },
+ {
+  "namn": "FT8 3,573 MHz",
+  "frekvens": 3575154,
+  "fam": [
+   "MFSK"
+  ],
+  "bredd": [
+   30,
+   120
+  ],
+  "kandidat": "FT8",
+  "not": "Användarens tips 2026-11-06: mycket FT8/FT4 på 3570–3580 kHz. Målet är den starkaste signalen i klippet."
+ },
+ {
+  "namn": "FT4 3,5755 MHz",
+  "frekvens": 3578766,
+  "fam": [
+   "FSK4",
+   "MFSK"
+  ],
+  "bredd": [
+   60,
+   160
+  ],
+  "kandidat": "FT4",
+  "not": "Användarens tips 2026-11-06: mycket FT8/FT4 på 3570–3580 kHz. Målet är den starkaste signalen i klippet."
+ },
+ {
+  "namn": "SSB-tal 7,060 MHz",
+  "frekvens": 7061400,
+  "fam": [
+   "SSB"
+  ],
+  "bredd": [
+   1800,
+   3200
+  ],
+  "not": "Användarens exempel 2026-11-06: SSB-tal. Energi 7060,3–7062,5 kHz (USB-sidan av 7,060)."
  }
 ]

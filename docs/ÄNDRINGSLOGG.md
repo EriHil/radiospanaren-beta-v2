@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 2.9.1 (2026-11-06)
+
+- **SSB-tal känns igen.** Talets övertoner gav ett regelbundet "tonraster" som tolkades som OFDM. Nu kräver OFDM och "digital linjär" jämn effekt, eftersom tal varierar med stavelserna.
+- **AM** kräver också att sidbanden är spegelbilder av varandra kring bärvågen. Det skiljer AM från en stark FT8-signal eller en FSK-ton.
+- **Bandbredd:** en FSK-ton tolkas inte längre som AM-bärvåg. Luckan som överbryggas skalas med signalens bredd. Överblicken försöker igen om den hamnar i en paus i en signal som sänder i omgångar.
+- **FT4** finns i signaldatabasen. Mätverktyget har nu 34 klipp: 22 riktiga och 12 syntetiska.
+
 ## 2.9.0 (2026-11-06)
 
 - **Automatisk bandbredd i signalanalysen.** I läget Auto mäter analysen själv hur bred signalen är: först en bred överblick, sedan avsmalnad kanal. Den mäter mot brusgolvet, så AM-sidband räknas med. Tätt liggande signaler, till exempel modem med 3 kHz mellanrum, skiljs åt. Tidigare blev det ofta bara bärvågen (cirka 400 Hz).
