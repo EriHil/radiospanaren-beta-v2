@@ -1,0 +1,1161 @@
+# -*- coding: utf-8 -*-
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""
+Fler avkodare för signalanalysen i Radiospanaren.
+
+  NAVTEX / SITOR-B   CCIR 476, 100 Bd, 170 Hz shift, FEC med repetition 5 tecken senare
+  POCSAG             personsökare 512/1200/2400 Bd, BCH(31,21)
+  ALE 2G             MIL-STD-188-141: 8-FSK 125 Bd, Golay(24,12), trippelredundans
+  Väderfax           HF-fax 120 rader/min, IOC 576, svart 1500 Hz / vit 2300 Hz
+  DMR                4FSK 4800 sym/s: synk, färgkod, burst-typ, LC-header (adresser, kryptering)
+
+Alla avkodare får komplext basband från analysens kanalutsnitt (mitt = analysens mål)
+och returnerar ny klartext. Hela meddelanden läggs i .msgs och visas i fliken Avkodat.
+Tabeller: SITOR-B från fldigi (GPL), ALE från MIL-STD-188-141B appendix A.
+"""
+import time
+
+import numpy as np
+
+import analys as A
+
+
+# ════════════════════════════════════════════════════════════════════
+# Gemensamt: diskriminator och symbolklocka
+# ════════════════════════════════════════════════════════════════════
+class FiAvkodare(A.Avkodare):
+    """Bas för FSK-avkodare: momentan frekvens som är kontinuerlig mellan bitarna."""
+
+    def reset(self):
+        self._prev = None
+        self._dtail = np.zeros(0, np.float32)
+        self.msgs = []
+
+    def _fi(self, z, fs, smooth):
+        if len(z) == 0:
+            return np.zeros(0, np.float32)
+        if self._prev is not None:
+            z = np.concatenate(([self._prev], z))
+        self._prev = z[-1]
+        d = (np.angle(z[1:] * np.conj(z[:-1])) * fs / (2 * np.pi)).astype(np.float32)
+        K = int(max(2, smooth * 2))
+        dd = np.concatenate((self._dtail, d))
+        v = A._smooth(dd, smooth).astype(np.float32)[len(self._dtail):]
+        self._dtail = dd[-K:]
+        return v
+
+    @staticmethod
+    def levels_from(feat, n, nominal_spacing, center=None):
+        """Tonernas frekvenser i kanalutsnittets ram, ur mätningen eller nominellt kring mitten."""
+        mid = feat.get("f_mid", 0.0) if center is None else center
+        pk = np.sort(np.asarray(feat.get("fi_peaks") or [], float)) + feat.get("f_mid", 0.0)
+        if len(pk) == n and n >= 2:
+            sp = np.diff(pk)
+            if np.all(sp > 0.6 * nominal_spacing) and np.all(sp < 1.5 * nominal_spacing):
+                return pk
+        return mid + (np.arange(n) - (n - 1) / 2) * nominal_spacing
+
+    def msg(self, typ, src, text, name="", kind=""):
+        self.msgs.append({"time": time.time(), "type": typ, "src": src, "name": name, "kind": kind,
+                          "text": text, "pos": None})
+
+
+class SymClock:
+    """Symbolbeslut med klockåterhämtning ur övergångarna mellan nivåer (2-, 4- eller 8-FSK)."""
+
+    def __init__(self, sps):
+        self.sps = float(sps)
+        self.tail = np.zeros(0, np.float32)
+        self.t = self.sps / 2
+        self.prev = None
+
+    def run(self, x, levels):
+        levels = np.asarray(levels, float)
+        sps = self.sps
+        buf = np.concatenate((self.tail, x))
+        t = self.t
+        out = []
+        n = len(buf)
+        hw = max(1, int(sps * 0.2))
+        while t + hw + 1 < n:
+            i = int(t)
+            val = float(buf[max(0, i - hw):i + hw + 1].mean())
+            k = int(np.argmin(np.abs(levels - val)))
+            if self.prev is not None and k != self.prev:
+                mid = (levels[k] + levels[self.prev]) / 2
+                a, b = max(0, int(t - sps)), i
+                if b - a > 2:
+                    seg = buf[a:b] - mid
+                    ch = np.flatnonzero(np.signbit(seg[1:]) != np.signbit(seg[:-1]))
+                    if len(ch):
+                        c = a + float(ch[len(ch) // 2]) + 0.5
+                        err = c - (t - sps / 2)
+                        t += float(np.clip(err, -sps / 4, sps / 4)) * 0.2
+            self.prev = k
+            out.append(k)
+            t += sps
+        cut = max(0, int(t - 2 * sps))
+        self.tail = buf[cut:]
+        self.t = t - cut
+        return out
+
+
+# ════════════════════════════════════════════════════════════════════
+# NAVTEX / SITOR-B
+# ════════════════════════════════════════════════════════════════════
+# kod → tecken (fldigi navtex.cxx code_to_ltrs / code_to_figs)
+_LT = {0x17: "J", 0x1B: "F", 0x1D: "C", 0x1E: "K", 0x27: "W", 0x2B: "Y", 0x2D: "P", 0x2E: "Q", 0x35: "G",
+       0x39: "M", 0x3A: "X", 0x3C: "V", 0x47: "A", 0x4B: "S", 0x4D: "I", 0x4E: "U", 0x53: "D", 0x55: "R",
+       0x56: "E", 0x59: "N", 0x5C: " ", 0x63: "Z", 0x65: "L", 0x69: "H", 0x6C: "\n", 0x71: "O", 0x72: "B",
+       0x74: "T", 0x78: "\r"}
+_FG = {0x17: "'", 0x1B: "!", 0x1D: ":", 0x1E: "(", 0x27: "2", 0x2B: "6", 0x2D: "0", 0x2E: "1", 0x35: "&",
+       0x39: ".", 0x3A: "/", 0x3C: ";", 0x47: "-", 0x4B: "\x07", 0x4D: "8", 0x4E: "7", 0x53: "$", 0x55: "4",
+       0x56: "3", 0x59: ",", 0x5C: " ", 0x63: '"', 0x65: ")", 0x69: "#", 0x6C: "\n", 0x71: "9", 0x72: "?",
+       0x74: "5", 0x78: "\r"}
+CCIR_LTRS = "".join(_LT.get(i, "_") for i in range(128))
+CCIR_FIGS = "".join(_FG.get(i, "_") for i in range(128))
+C_LTRS, C_FIGS, C_ALPHA, C_BETA, C_BLK, C_REP = 0x5A, 0x36, 0x0F, 0x33, 0x6A, 0x66
+CCIR_VALID = {c for c in range(128) if bin(c).count("1") == 4}
+NAVTEX_AMNE = {"A": "Navigationsvarning", "B": "Meteorologisk varning", "C": "Israpport",
+               "D": "Sök och räddning / pirater", "E": "Väderprognos", "F": "Lotsmeddelande",
+               "G": "AIS", "H": "LORAN", "J": "Satellitnavigering", "K": "Övriga navigationshjälpmedel",
+               "L": "Navigationsvarning (forts.)", "T": "Test", "V": "Fiskemeddelande", "W": "Miljö",
+               "X": "Särskild tjänst", "Y": "Särskild tjänst", "Z": "Inga meddelanden"}
+
+
+class NavtexAvkodare(FiAvkodare):
+    namn = "NAVTEX / SITOR-B"
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        super().reset()
+        self.clk = None
+        self.bits = []
+        self.chars = []
+        self.align = None
+        self.valid_hist = []
+        self.par = None
+        self.pos = 0
+        self.figs = False
+        self.text = ""
+        self.msgbuf = None
+        self.errs = 0
+        self.ok = 0
+
+    def passar(self, feat):
+        b, s = feat.get("baud"), feat.get("shift")
+        return feat.get("fam") == "FSK2" and b and (abs(b - 100) < 5 or abs(b - 50) < 2.5) and s and 120 <= s <= 260
+
+    def har_synk(self):
+        return self.align is not None and self.par is not None
+
+    def fakta(self):
+        return {"baud": 100.0, "fam": "FSK2", "klass": "2-FSK (SITOR-B 100 Bd)", "shift": 170.0, "toner": 2}
+
+    def feed(self, z, fs, feat):
+        sps = fs / 100.0
+        if self.clk is None:
+            self.clk = SymClock(sps)
+        lv = self.levels_from(feat, 2, 170)
+        v = self._fi(z, fs, sps / 4)
+        for k in self.clk.run(v, lv):
+            self.bits.append(1 if k == 1 else 0)       # högre ton = mark = 1
+        out = self._frame()
+        if len(self.bits) > 4000:
+            drop = len(self.bits) - 1000
+            if self.align is not None:
+                drop = min(drop, self.align_pos)
+                self.align_pos -= drop
+            del self.bits[:drop]
+        return out
+
+    def _code(self, i):
+        c = 0
+        for k in range(7):
+            c |= self.bits[i + k] << k                # första biten = b0 (som fldigi)
+        return c
+
+    def _frame(self):
+        n = len(self.bits)
+        if self.align is None:
+            if n < 140:
+                return ""
+
+            def score(a):
+                sc = 0
+                for i in range(n - 140 + a, n - 7, 7):
+                    c = self._code(i)
+                    sc += (c in CCIR_VALID) + 2 * (c in (C_ALPHA, C_REP))
+                return sc
+            best = max(range(7), key=score)
+            cnt = sum(self._code(i) in CCIR_VALID for i in range(n - 140 + best, n - 7, 7))
+            if cnt < 17:
+                return ""
+            self.align = best
+            self.align_pos = n - 140 + best
+        out = []
+        i = self.align_pos
+        while i + 7 <= len(self.bits):
+            c = self._code(i)
+            self.chars.append(c)
+            self.valid_hist.append(c in CCIR_VALID)
+            i += 7
+        self.align_pos = i
+        self.valid_hist = self.valid_hist[-40:]
+        if len(self.valid_hist) >= 30 and sum(self.valid_hist) < 20:
+            self.align = None                          # tappat synk
+            self.chars = []
+            self.par = None
+            return "".join(out)
+        out.append(self._fec())
+        return "".join(out)
+
+    def _fec(self):
+        ch = self.chars
+        if self.par is None:
+            if len(ch) < 30:
+                return ""
+            # fasning: rep sänds i DX-läget (första sändningen), alpha i RX-läget
+            reps = [p % 2 for p, c in enumerate(ch) if c == C_REP]
+            if len(reps) >= 4:
+                self.par = int(round(np.mean(reps)))
+            else:
+                sc = [sum(1 for p in range(par, len(ch) - 5, 2) if ch[p] == ch[p + 5] and ch[p] in CCIR_VALID)
+                      for par in (0, 1)]
+                if max(sc) < 6:
+                    return ""
+                self.par = int(np.argmax(sc))
+            self.pos = self.par
+        out = []
+        p = self.pos
+        while p + 5 < len(ch):
+            a, b = ch[p], ch[p + 5]
+            c = a if a in CCIR_VALID else (b if b in CCIR_VALID else None)
+            if a in CCIR_VALID and b in CCIR_VALID and a != b:
+                c = a
+            if c is None:
+                self.errs += 1
+                out.append(self._put("_"))
+            else:
+                self.ok += 1
+                if c == C_LTRS:
+                    self.figs = False
+                elif c == C_FIGS:
+                    self.figs = True
+                elif c in (C_ALPHA, C_BETA, C_REP, C_BLK):
+                    pass
+                else:
+                    t = (CCIR_FIGS if self.figs else CCIR_LTRS)[c]
+                    if t != "_" and t != "\x07":
+                        out.append(self._put("\n" if t == "\r" else t))
+            p += 2
+        self.pos = p
+        if len(ch) > 2000:
+            cut = (len(ch) - 200) // 2 * 2
+            del ch[:cut]
+            self.pos -= cut
+        return "".join(s for s in out if s)
+
+    def _put(self, t):
+        if t == "\n" and self.text.endswith("\n"):
+            return ""
+        self.text = (self.text + t)[-4000:]
+        if self.text.endswith("ZCZC"):
+            self.msgbuf = "ZCZC"
+        elif self.msgbuf is not None:
+            self.msgbuf += t
+            if self.msgbuf.endswith("NNNN") or len(self.msgbuf) > 6000:
+                self._emit(self.msgbuf)
+                self.msgbuf = None
+        return t
+
+    def _emit(self, m):
+        lines = m[4:].strip().split("\n")
+        hid = lines[0].strip()[:4] if lines else ""
+        amne = NAVTEX_AMNE.get(hid[1:2], "") if len(hid) >= 2 else ""
+        body = " ".join(x.strip() for x in lines[1:]).replace("NNNN", "").strip()
+        self.msg("NAVTEX", hid[:1], body, name=hid, kind=amne)
+
+    def varden(self):
+        if self.align is None:
+            return [("NAVTEX", "söker teckensynk …")]
+        tot = self.ok + self.errs
+        return [("NAVTEX", "synk, FEC " + (f"{100 * self.ok / tot:.0f} % rätt" if tot else "väntar"))]
+
+
+def make_sitor_b(fs, text, shift=170.0):
+    """Testsignal: SITOR-B med FEC (repetition 5 tecken senare), första biten = b0."""
+    rev_l = {c: i for i, c in _LT.items()}
+    rev_f = {c: i for i, c in _FG.items()}
+    codes = []
+    figs = False
+    for ch in text.upper().replace("\n", "\r\n"):
+        if ch in rev_l:
+            if figs and ch not in " \r\n":
+                codes.append(C_LTRS)
+                figs = False
+            codes.append(rev_l[ch])
+        elif ch in rev_f:
+            if not figs:
+                codes.append(C_FIGS)
+                figs = True
+            codes.append(rev_f[ch])
+    seq = []
+    pre = [C_REP, C_ALPHA] * 60          # fasning (verklig NAVTEX: ca 10 s)
+    seq += pre
+    # position 2k = första sändning (DX), 2k+5 = repetitionen (RX)
+    L = len(codes) + 3
+    slots = [None] * (2 * L + 10)
+    for k, c in enumerate(codes):
+        slots[2 * k] = c
+        slots[2 * k + 5] = c
+    for i, s in enumerate(slots):
+        if s is None:
+            slots[i] = C_ALPHA if i % 2 else C_REP
+    seq += slots + [C_REP, C_ALPHA] * 6
+    bits = []
+    for c in seq:
+        bits += [(c >> k) & 1 for k in range(7)]
+    sps = fs / 100.0
+    n = int(len(bits) * sps)
+    idx = np.minimum((np.arange(n) / sps).astype(np.int64), len(bits) - 1)
+    f = np.where(np.asarray(bits)[idx] == 1, shift / 2, -shift / 2)
+    return np.exp(2j * np.pi * np.cumsum(f) / fs).astype(np.complex64)
+
+
+# ════════════════════════════════════════════════════════════════════
+# POCSAG
+# ════════════════════════════════════════════════════════════════════
+POCSAG_SYNC = 0x7CD215D8
+POCSAG_IDLE = 0x7A89C197
+POCSAG_NUM = "0123456789*U -)("
+
+
+def _bch_rem(cw31):
+    g = 0x769
+    v = cw31
+    for i in range(30, 9, -1):
+        if v & (1 << i):
+            v ^= g << (i - 10)
+    return v & 0x3FF
+
+
+def pocsag_ok(cw):
+    return _bch_rem(cw >> 1) == 0 and bin(cw).count("1") % 2 == 0
+
+
+def pocsag_fix(cw):
+    """Kontrollerar och rättar högst ett bitfel. Returnerar kodordet eller None."""
+    if pocsag_ok(cw):
+        return cw
+    for i in range(32):
+        c = cw ^ (1 << i)
+        if pocsag_ok(c):
+            return c
+    return None
+
+
+def pocsag_encode(data21):
+    cw = data21 << 10
+    cw |= _bch_rem(cw)
+    cw = (cw << 1) | (bin(cw).count("1") & 1)
+    return cw
+
+
+class PocsagAvkodare(FiAvkodare):
+    namn = "POCSAG"
+    RATES = (512, 1200, 2400)
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        super().reset()
+        self.clk = None
+        self.rate = None
+        self.bits = [[], []]
+        self.state = [None, None]
+        self.n_msgs = 0
+        self.pol = None
+
+    def passar(self, feat):
+        b, s = feat.get("baud"), feat.get("shift")
+        if feat.get("fam") not in ("FSK2", "MSK") or not b:
+            return False
+        return any(abs(b - r) / r < 0.04 for r in self.RATES) and (not s or 2000 <= s <= 12000)
+
+    def feed(self, z, fs, feat):
+        b = feat.get("baud") or self.rate or 1200
+        rate = min(self.RATES, key=lambda r: abs(r - b))
+        if rate != self.rate:
+            self.rate = rate
+            self.clk = SymClock(fs / rate)
+        lv = self.levels_from(feat, 2, 9000)
+        v = self._fi(z, fs, fs / rate / 4)
+        syms = self.clk.run(v, lv)
+        out = []
+        for pol in (0, 1):
+            # POCSAG: binär 1 = lägre frekvens (normal polaritet = pol 0)
+            self.bits[pol] += [(1 - k) if pol == 0 else k for k in syms]
+            out.append(self._scan(pol))
+        return "".join(out)
+
+    def _scan(self, pol):
+        bits = self.bits[pol]
+        st = self.state[pol]
+        out = []
+        i = 0
+        n = len(bits)
+        while True:
+            if st is None:
+                # sök synkordet (högst 2 fel)
+                found = None
+                w = 0
+                for j in range(i, n):
+                    w = ((w << 1) | bits[j]) & 0xFFFFFFFF
+                    if j - i >= 31 and bin(w ^ POCSAG_SYNC).count("1") <= 2:
+                        found = j + 1
+                        break
+                if found is None:
+                    i = max(i, n - 31)
+                    break
+                st = {"pos": found, "cw": 0, "msg": None}
+                i = found
+            if st["pos"] + 32 > n:
+                break
+            w = 0
+            for b in bits[st["pos"]:st["pos"] + 32]:
+                w = (w << 1) | b
+            st["pos"] += 32
+            if st["cw"] == 16:                  # efter en batch ska nästa synk komma
+                st["cw"] = 0
+                if bin(w ^ POCSAG_SYNC).count("1") > 3:
+                    out.append(self._end(st))
+                    st = None
+                    i = max(0, n - 31) if n - 31 > i else i
+                    continue
+                continue
+            idx = st["cw"]
+            st["cw"] += 1
+            cw = pocsag_fix(w)
+            if cw is None or cw == POCSAG_IDLE:
+                out.append(self._end(st))
+                continue
+            if self.pol is None:
+                self.pol = pol
+            if cw >> 31 == 0:                   # adress
+                out.append(self._end(st))
+                addr = (((cw >> 13) & 0x3FFFF) << 3) | (idx // 2)
+                st["msg"] = {"addr": addr, "func": (cw >> 11) & 3, "data": []}
+            elif st["msg"] is not None:
+                st["msg"]["data"].append((cw >> 11) & 0xFFFFF)
+        self.state[pol] = st
+        cut = (st["pos"] if st else i) - 64
+        if cut > 0:
+            del bits[:cut]
+            if st:
+                st["pos"] -= cut
+        return "".join(out)
+
+    def _end(self, st):
+        m = st.get("msg") if st else None
+        if not m:
+            return ""
+        st["msg"] = None
+        bits = []
+        for d in m["data"]:
+            bits += [(d >> (19 - k)) & 1 for k in range(20)]
+        num = "".join(POCSAG_NUM[sum(bits[i + k] << k for k in range(4))] for i in range(0, len(bits) - 3, 4))
+        alpha = ""
+        for i in range(0, len(bits) - 6, 7):
+            c = sum(bits[i + k] << k for k in range(7))
+            if c in (0, 4, 23):     # NUL/EOT/ETB = slut
+                break
+            alpha += chr(c) if 32 <= c < 127 else ("\n" if c == 10 else "")
+        printable = sum(ch.isalnum() or ch in " .,:-/" for ch in alpha) / max(1, len(alpha))
+        if not m["data"]:
+            text, kind = "(endast ton)", "ton"
+        elif m["func"] == 0 or (printable < 0.7 and m["func"] != 3):
+            text, kind = num.strip(), "numeriskt"
+        else:
+            text, kind = alpha.strip(), "text"
+        self.n_msgs += 1
+        self.msg("POCSAG", str(m["addr"]), text, name=f"funktion {m['func']}", kind=kind)
+        return f"[{m['addr']}/{m['func']}] {text}\n"
+
+    def har_synk(self):
+        return self.pol is not None
+
+    def fakta(self):
+        return {"baud": float(self.rate), "fam": "FSK2", "klass": f"2-FSK (POCSAG {self.rate} Bd)"}
+
+    def varden(self):
+        return [("POCSAG", f"{self.rate} Bd, {self.n_msgs} meddelanden" if self.rate else "–")]
+
+
+def make_pocsag(fs, rate, pages, shift=9000.0):
+    """Testsignal: [(adress, funktion, text eller None, numeriskt?)]."""
+    bits = [1, 0] * 288
+    cws = []
+    for addr, func, text, numeric in pages:
+        frame = addr & 7
+        batch = [POCSAG_IDLE] * 16
+        batch[frame * 2] = pocsag_encode(((addr >> 3) << 2 | func) & 0x1FFFFF)
+        data = []
+        if text:
+            if numeric:
+                rev = {c: i for i, c in enumerate(POCSAG_NUM)}
+                for ch in text:
+                    v = rev[ch]
+                    data += [(v >> k) & 1 for k in range(4)]
+            else:
+                for ch in text:
+                    data += [(ord(ch) >> k) & 1 for k in range(7)]
+            data += [0] * (-len(data) % 20)
+        words = [int("".join(map(str, data[i:i + 20])), 2) for i in range(0, len(data), 20)]
+        pos = frame * 2 + 1
+        rest = []
+        for wd in words:
+            cw = pocsag_encode((1 << 20) | wd)
+            if pos < 16:
+                batch[pos] = cw
+                pos += 1
+            else:
+                rest.append(cw)
+        cws.append(batch)
+        while rest:
+            b2 = [POCSAG_IDLE] * 16
+            for k in range(min(16, len(rest))):
+                b2[k] = rest.pop(0)
+            cws.append(b2)
+    for batch in cws:
+        for cw in [POCSAG_SYNC] + batch:
+            bits += [(cw >> (31 - k)) & 1 for k in range(32)]
+    bits += [1, 0] * 32
+    sps = fs / rate
+    n = int(len(bits) * sps)
+    idx = np.minimum((np.arange(n) / sps).astype(np.int64), len(bits) - 1)
+    f = np.where(np.asarray(bits)[idx] == 1, -shift / 2, shift / 2)
+    return np.exp(2j * np.pi * np.cumsum(f) / fs).astype(np.complex64)
+
+
+# ════════════════════════════════════════════════════════════════════
+# ALE 2G (MIL-STD-188-141)
+# ════════════════════════════════════════════════════════════════════
+# Golay (24,12): paritetsmatris P ur figur A-6 (rad i = informationsbit i, W1 först)
+_GOLAY_P = ["101011100011", "111110010010", "110100101011", "110001110110", "110011011001", "011001101101",
+            "001100110111", "101101111000", "010110111100", "001011011110", "101110001101", "010111000111"]
+GOLAY_P = [int(r, 2) for r in _GOLAY_P]
+ALE_TONE_BITS = [0b000, 0b001, 0b011, 0b010, 0b110, 0b111, 0b101, 0b100]   # 750, 1000 … 2500 Hz
+ALE_PRE = {0b001: "THRU", 0b010: "TO", 0b110: "CMD", 0b100: "FROM", 0b101: "TIS", 0b011: "TWAS",
+           0b000: "DATA", 0b111: "REP"}
+ALE_BASIC = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@?")
+
+
+def golay_parity(d12):
+    p = 0
+    for i in range(12):
+        if d12 & (1 << (11 - i)):
+            p ^= GOLAY_P[i]
+    return p
+
+
+_GOLAY_SYN = None
+
+
+def golay_decode(cw24):
+    """Rättar upp till 3 fel. Returnerar (12 databitar, antal fel) eller (None, -1)."""
+    global _GOLAY_SYN
+    if _GOLAY_SYN is None:
+        tab = {}
+        import itertools
+        for w in range(0, 4):
+            for pos in itertools.combinations(range(24), w):
+                e = 0
+                for p in pos:
+                    e |= 1 << p
+                s = golay_parity(e >> 12) ^ (e & 0xFFF)
+                tab.setdefault(s, (e, w))
+        _GOLAY_SYN = tab
+    d, p = cw24 >> 12, cw24 & 0xFFF
+    s = golay_parity(d) ^ p
+    hit = _GOLAY_SYN.get(s)
+    if hit is None:
+        return None, -1
+    e, w = hit
+    return ((cw24 ^ e) >> 12) & 0xFFF, w
+
+
+def ale_encode_word(pre, chars):
+    """24-bitars ALE-ord → 49 sända bitar (A1 B1 … A24 B24 S49)."""
+    w = pre << 21
+    for k, ch in enumerate(chars[:3].ljust(3, "@")):
+        w |= (ord(ch) & 0x7F) << (14 - 7 * k)
+    a, b = w >> 12, w & 0xFFF
+    A_ = (a << 12) | golay_parity(a)
+    B_ = (b << 12) | (golay_parity(b) ^ 0xFFF)
+    bits = []
+    for i in range(24):
+        bits.append((A_ >> (23 - i)) & 1)
+        bits.append((B_ >> (23 - i)) & 1)
+    return bits + [0]
+
+
+def make_ale(fs, words, lsb=False):
+    """Testsignal: lista med (preamble-namn, 3 tecken); varje ord sänds tre gånger."""
+    rev = {v: k for k, v in ALE_PRE.items()}
+    bits = []
+    for name, chars in words:
+        wb = ale_encode_word(rev[name], chars)
+        bits += wb * 3
+    bits += [0] * (-len(bits) % 3)
+    tone_of = {b: i for i, b in enumerate(ALE_TONE_BITS)}
+    syms = [tone_of[(bits[i] << 2) | (bits[i + 1] << 1) | bits[i + 2]] for i in range(0, len(bits), 3)]
+    syms = [0, 7] * 4 + syms + [0] * 4
+    sps = fs / 125.0
+    n = int(len(syms) * sps)
+    idx = np.minimum((np.arange(n) / sps).astype(np.int64), len(syms) - 1)
+    f = (np.asarray(syms)[idx] - 3.5) * 250.0 * (-1 if lsb else 1)
+    return np.exp(2j * np.pi * np.cumsum(f) / fs).astype(np.complex64)
+
+
+class AleAvkodare(FiAvkodare):
+    namn = "ALE 2G (MIL-STD-188-141)"
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        super().reset()
+        self.clk = None
+        self.bits = [[], []]       # normal och spegelvänd tonordning (USB/LSB)
+        self.scanned = [0, 0]
+        self.phase = [None, None]
+        self.miss = [0, 0]
+        self.last = [None, None]
+        self.last_end = [0, 0]
+        self.frame = []
+        self.n_words = 0
+        self.inv = None
+        self.calls = []
+
+    def passar(self, feat):
+        fam, b, s, nt = feat.get("fam"), feat.get("baud"), feat.get("shift"), feat.get("toner")
+        if fam != "MFSK":
+            return False
+        return (b and abs(b - 125) < 6) or (s and abs(s - 250) < 30 and nt and 6 <= nt <= 8)
+
+    def feed(self, z, fs, feat):
+        sps = fs / 125.0
+        if self.clk is None:
+            self.clk = SymClock(sps)
+        lv = self.levels_from(feat, 8, 250)
+        v = self._fi(z, fs, sps / 6)
+        out = []
+        for k in self.clk.run(v, lv):
+            for o in (0, 1):
+                t = ALE_TONE_BITS[k if o == 0 else 7 - k]
+                self.bits[o] += [(t >> 2) & 1, (t >> 1) & 1, t & 1]
+        for o in (0, 1):
+            out.append(self._scan(o))
+        return "".join(out)
+
+    def _scan(self, o):
+        b = self.bits[o]
+        out = []
+        n = len(b)
+        start = max(147, self.scanned[o] + 1)
+        arr = np.asarray(b, np.int8)
+        for end in range(start, n + 1):
+            ph = self.phase[o]
+            if ph is not None and end - self.last_end[o] > 4 * 49:
+                ph = self.phase[o] = None     # inget giltigt ord på en stund – släpp låsningen
+                self.last[o] = None
+            if ph is not None and (end - ph) % 49 != 0:
+                continue                      # ordfasen är låst: bara ordgränser (stoppar roterade ord)
+            seg = arr[end - 147:end]
+            c1, c2, c3 = seg[:49], seg[49:98], seg[98:147]
+            maj = ((c1.astype(int) + c2 + c3) >= 2).astype(int)
+            unan = int(np.sum((c1 == c2) & (c2 == c3)))
+            w = self._word(maj[:48]) if unan >= 34 and not (c1[48] | c2[48] | c3[48]) else None
+            if w is None:
+                continue
+            self.phase[o] = end % 49 if ph is None else ph
+            if self.inv is None:
+                self.inv = o
+            if self.last[o] == w and end - self.last_end[o] <= 3 * 49:
+                self.last_end[o] = end        # samma ord igen (tripplat eller skanningsanrop)
+                continue
+            self.last[o] = w
+            self.last_end[o] = end
+            out.append(self._handle(*w))
+        self.scanned[o] = n
+        keep = max(0, n - 200)
+        if keep:
+            del b[:keep]
+            self.scanned[o] -= keep
+            self.last_end[o] -= keep
+            if self.phase[o] is not None:
+                self.phase[o] = (self.phase[o] - keep) % 49
+        return "".join(out)
+
+    @staticmethod
+    def _word(m48):
+        A_ = 0
+        B_ = 0
+        for i in range(24):
+            A_ = (A_ << 1) | int(m48[2 * i])
+            B_ = (B_ << 1) | int(m48[2 * i + 1])
+        B_ ^= 0xFFF                          # kontrollbitarna i B är inverterade
+        a, ea = golay_decode(A_)
+        bb, eb = golay_decode(B_)
+        if a is None or bb is None or ea + eb > 3:
+            return None
+        w = (a << 12) | bb
+        pre = ALE_PRE[w >> 21]
+        chars = "".join(chr((w >> (14 - 7 * k)) & 0x7F) for k in range(3))
+        if pre in ("TO", "TIS", "TWAS", "THRU", "FROM", "DATA", "REP"):
+            if not all(ch in ALE_BASIC for ch in chars):
+                return None
+        elif not all(32 <= ord(ch) < 127 for ch in chars):
+            return None
+        return pre, chars
+
+    def _handle(self, pre, txt):
+        self.n_words += 1
+        if pre in ("DATA", "REP") and self.frame:
+            self.frame[-1][1] += txt
+            # skanningsanrop: samma adress upprepas (TO SM5, DATA SIM, TO SM5 …) – slå ihop
+            if len(self.frame) >= 2 and self.frame[-1] == self.frame[-2]:
+                self.frame.pop()
+        else:
+            if self.frame and self.frame[-1][0] == pre and self.frame[-1][1].startswith(txt) and pre == "TO":
+                self.frame.append([pre, txt])
+            else:
+                self.frame.append([pre, txt])
+        out = f"[{pre}] {txt}\n"
+        if pre in ("TIS", "TWAS"):
+            parts = []
+            for p, t in self.frame:
+                e = f"{p} {t.rstrip('@')}"
+                if p in ("TO", "THRU", "TIS", "TWAS", "FROM", "CMD") and e not in parts:
+                    parts.append(e)
+            frm = self.frame[-1][1].rstrip("@")
+            to = list(dict.fromkeys(t.rstrip("@") for p, t in self.frame if p in ("TO", "THRU")))
+            kind = ("Anrop" if to else "Sondering") + (" (avböjd)" if pre == "TWAS" else "")
+            self.msg("ALE", frm, " · ".join(parts), name=", ".join(to), kind=kind)
+            self.calls.append(f"{frm}→{','.join(to) or '–'}")
+            out += f"   ⇒ {kind}: {frm}" + (f" anropar {', '.join(to)}" if to else "") + "\n"
+            self.frame = []
+        elif len(self.frame) > 40:
+            self.frame = self.frame[-10:]
+        return out
+
+    def har_synk(self):
+        return self.inv is not None and any(p is not None for p in self.phase)
+
+    def fakta(self):
+        return {"baud": 125.0, "klass": "8-FSK (ALE 2G)"}
+
+    def varden(self):
+        v = [("ALE", f"{self.n_words} ord" + ("" if self.inv is None else
+                                              (" (USB)" if self.inv == 0 else " (spegelvänd/LSB)")))]
+        if self.calls:
+            v.append(("Senaste anrop", self.calls[-1]))
+        return v
+
+
+# ════════════════════════════════════════════════════════════════════
+# Väderfax (HF-fax)
+# ════════════════════════════════════════════════════════════════════
+class FaxAvkodare(FiAvkodare):
+    namn = "Väderfax (HF-fax)"
+    LPM = 120
+    W = 1200
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        super().reset()
+        self.buf = np.zeros(0, np.float32)
+        self.rows = []
+        self.bild = None           # uint8 (rader, W) – läses av GUI:t
+        self.bild_id = 0
+        self.offset = 0
+        self.lo = None
+        self.hi = None
+        self.status = "väntar på signal"
+        self.zc_hist = []
+
+    def passar(self, feat):
+        k = feat.get("kandidater") or []
+        if k and k[0][1]["namn"].startswith("Väderfax"):
+            return True
+        occ, fam = feat.get("occ_bw") or 0, feat.get("fam")
+        return fam in ("FM", "FSK2") and 650 <= occ <= 1300 and not feat.get("baud")
+
+    def feed(self, z, fs, feat):
+        spl = fs * 60.0 / self.LPM                # samples per rad
+        v = self._fi(z, fs, max(1, fs / 2400))
+        mid = feat.get("f_mid", 0.0)
+        # IOC-start (300 Hz) och stopp (450 Hz): räkna nollgenomgångar runt mitten
+        if len(v) > fs * 0.2:
+            zc = np.count_nonzero(np.diff(np.signbit(v - mid))) / (len(v) / fs) / 2
+            spread = np.percentile(v, 90) - np.percentile(v, 10)
+            if spread > 500:
+                if abs(zc - 300) < 25:
+                    if self.status != "startton":
+                        self._new_image()
+                    self.status = "startton"
+                elif abs(zc - 450) < 30:
+                    self.status = "stoppton – bilden klar"
+        lo_, hi_ = np.percentile(v, 1), np.percentile(v, 99)
+        if hi_ - lo_ > 400:
+            self.lo = lo_ if self.lo is None else self.lo * 0.9 + lo_ * 0.1
+            self.hi = hi_ if self.hi is None else self.hi * 0.9 + hi_ * 0.1
+        if self.lo is None:
+            return ""
+        c = (self.lo + self.hi) / 2
+        lum = np.clip((v - (c - 400)) / 800.0, 0, 1)
+        self.buf = np.concatenate((self.buf, lum.astype(np.float32)))
+        new = 0
+        while len(self.buf) >= spl:
+            n = int(spl)
+            line = self.buf[:n]
+            self.buf = self.buf[n:]
+            # bråkdelen av samples per rad bärs över så att bilden inte lutar
+            frac = spl - n
+            self._acc = getattr(self, "_acc", 0.0) + frac
+            if self._acc >= 1 and len(self.buf):
+                self.buf = self.buf[1:]
+                self._acc -= 1
+            x = np.linspace(0, n - 1, self.W)
+            row = (np.interp(x, np.arange(n), line) * 255).astype(np.uint8)
+            self.rows.append(row)
+            new += 1
+        if new:
+            self._phase()
+            if self.status in ("väntar på signal", "startton"):
+                self.status = "tar emot bild"
+            img = np.asarray(self.rows[-1600:])
+            self.bild = np.roll(img, -self.offset, axis=1)
+            self.bild_id += 1
+        return ""
+
+    def _phase(self):
+        """Fasning: hitta den smala pulsen (ca 5 % av raden) som återkommer på samma plats."""
+        if len(self.rows) < 8:
+            return
+        m = np.asarray(self.rows[-20:], float).mean(axis=0) / 255
+        w = int(self.W * 0.05)
+        k = np.ones(w) / w
+        mm = np.concatenate((m, m[:w]))
+        s = np.convolve(mm, k, "valid")[:self.W]
+        rest = float(np.median(m))
+        dev = np.abs(s - rest)
+        i = int(np.argmax(dev))
+        others = np.delete(m, np.arange(i, i + w) % self.W)
+        if dev[i] > 0.45 and np.std(others) < 0.18:      # bara under fasningsraderna
+            self.offset = int(i % self.W)
+
+    def _new_image(self):
+        self.rows = []
+        self.offset = 0
+        self.bild = None
+
+    def har_synk(self):
+        return len(self.rows) > 10
+
+    def fakta(self):
+        return {"klass": "Väderfax (FM 1500–2300 Hz)", "baud": None}
+
+    def varden(self):
+        return [("Fax", f"{self.status}, {len(self.rows)} rader (120 rader/min)")]
+
+
+def make_fax(fs, rows=40, width=400, shift=800.0):
+    """Testsignal: starttón, fasningsrader och ett schackmönster."""
+    spl = int(fs * 0.5)
+    parts = []
+    t = np.arange(int(fs * 3)) / fs
+    parts.append(np.where(np.sin(2 * np.pi * 300 * t) > 0, 1.0, 0.0))
+    for _ in range(15):          # fasning: vit rad med svart puls 5 %
+        ln = np.ones(spl)
+        ln[:int(spl * 0.05)] = 0
+        parts.append(np.roll(ln, int(spl * 0.3)))
+    for r in range(rows):
+        x = np.arange(spl) / spl
+        ln = (((x * 8).astype(int) + (r // 5)) % 2).astype(float)
+        ln[:int(spl * 0.05)] = 0.0
+        parts.append(np.roll(ln, int(spl * 0.3)))
+    lum = np.concatenate(parts)
+    f = (lum - 0.5) * shift
+    return np.exp(2j * np.pi * np.cumsum(f) / fs).astype(np.complex64)
+
+
+# ════════════════════════════════════════════════════════════════════
+# DMR
+# ════════════════════════════════════════════════════════════════════
+DMR_SYNC = {0x755FD7DF75F7: ("BS", "tal"), 0xDFF57D75DF5D: ("BS", "data"),
+            0x7F7D5DD57DFD: ("MS", "tal"), 0xD5D7F77FD757: ("MS", "data"),
+            0x5D577F7757FF: ("direkt TS1", "tal"), 0xF7FDD5DDFD55: ("direkt TS1", "data"),
+            0x7DFFD5F55D5F: ("direkt TS2", "tal"), 0xD7557F5FF7F5: ("direkt TS2", "data")}
+DMR_DT = {0: "PI-header", 1: "Voice LC-header", 2: "Terminator med LC", 3: "CSBK", 4: "MBC-header",
+          5: "MBC-fortsättning", 6: "Data-header", 7: "Data 1/2", 8: "Data 3/4", 9: "Tomgång", 10: "Data 1/1"}
+# dibit per nivå i stigande frekvensordning: -3, -1, +1, +3
+DMR_DIBIT = [0b11, 0b10, 0b00, 0b01]
+
+_GF_EXP = [0] * 512
+_GF_LOG = [0] * 256
+_x = 1
+for _i in range(255):
+    _GF_EXP[_i] = _x
+    _GF_LOG[_x] = _i
+    _x <<= 1
+    if _x & 0x100:
+        _x ^= 0x11D
+for _i in range(255, 512):
+    _GF_EXP[_i] = _GF_EXP[_i - 255]
+
+
+def _gmul(a, b):
+    return 0 if a == 0 or b == 0 else _GF_EXP[_GF_LOG[a] + _GF_LOG[b]]
+
+
+def rs1293_parity(data9):
+    """RS(12,9) över GF(256) (0x11D), g(x) = (x+α)(x+α²)(x+α³)."""
+    g = [1]
+    for r in (1, 2, 3):
+        a = _GF_EXP[r]
+        ng = [0] * (len(g) + 1)
+        for i, c in enumerate(g):
+            ng[i] ^= c
+            ng[i + 1] ^= _gmul(c, a)
+        g = ng
+    reg = [0, 0, 0]
+    for d in data9:
+        fb = d ^ reg[0]
+        reg = [reg[1] ^ _gmul(fb, g[1]), reg[2] ^ _gmul(fb, g[2]), _gmul(fb, g[3])]
+    return reg
+
+
+def bptc_extract(bits196, forward=True):
+    """BPTC(196,96): avinterfoliera och plocka ut de 96 databitarna (utan Hamming-rättning)."""
+    d = [0] * 196
+    for i in range(196):
+        j = (i * 181) % 196
+        if forward:
+            d[i] = bits196[j]
+        else:
+            d[j] = bits196[i]
+    m = np.asarray(d[1:], np.int8).reshape(13, 15)
+    return m[:9, :11].reshape(-1)[3:].tolist()
+
+
+def bptc_build(data96):
+    """Bygger 196 bitar (Hamming-paritet nollad – räcker för testsignaler)."""
+    m = np.zeros((13, 15), np.int8)
+    flat = [0, 0, 0] + list(data96)
+    m[:9, :11] = np.asarray(flat, np.int8).reshape(9, 11)
+    d = [0] + m.reshape(-1).tolist()
+    out = [0] * 196
+    for i in range(196):
+        out[(i * 181) % 196] = d[i]
+    return out
+
+
+class DmrAvkodare(FiAvkodare):
+    namn = "DMR"
+    MASK = {1: (0x96, 0x96, 0x96), 2: (0x99, 0x99, 0x99)}
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        super().reset()
+        self.clk = None
+        self.syms = []
+        self.counts = {}
+        self.cc = {}
+        self.dt = {}
+        self.lc = None
+        self.priv = None
+        self.inv = None
+        self.n_lc = 0
+        self.sync_w = [{}, {}]
+
+    def passar(self, feat):
+        b, fam, occ = feat.get("baud"), feat.get("fam"), feat.get("occ_bw") or 0
+        if not (5000 < occ < 14000) or fam not in ("FSK4", "MFSK", "FM", "LIN", "OKÄND"):
+            return False
+        # synkordet avgör – avkodaren är billig och ger inga falsklarm på analog FM
+        return bool((b and abs(b - 4800) < 150) or fam in ("FSK4", "MFSK", "FM"))
+
+    def feed(self, z, fs, feat):
+        sps = fs / 4800.0
+        if self.clk is None:
+            self.clk = SymClock(sps)
+        lv = self.levels_from(feat, 4, 1296)
+        v = self._fi(z, fs, max(1, sps / 3))
+        self.syms += self.clk.run(v, lv)
+        out = self._scan()
+        if len(self.syms) > 6000:
+            del self.syms[:len(self.syms) - 600]
+        return out
+
+    def _scan(self):
+        s = self.syms
+        out = []
+        start = getattr(self, "_pos", 66)
+        n = len(s)
+        i = max(66, start)
+        while i + 24 + 66 <= n:
+            w = [0, 0]
+            for k in range(24):
+                d = DMR_DIBIT[s[i + k]]
+                w[0] = (w[0] << 2) | d
+                w[1] = (w[1] << 2) | DMR_DIBIT[3 - s[i + k]]
+            hit = None
+            for pol in (0, 1):
+                for pat, info in DMR_SYNC.items():
+                    if bin(w[pol] ^ pat).count("1") <= 4:
+                        hit = (pol, info)
+                        break
+                if hit:
+                    break
+            if not hit:
+                i += 1
+                continue
+            pol, (src, kind) = hit
+            if self.inv is None:
+                self.inv = pol
+            key = f"{src} {kind}"
+            self.counts[key] = self.counts.get(key, 0) + 1
+            if kind == "data":
+                out.append(self._data_burst(i, pol))
+            i += 24 + 66        # hoppa förbi resten av burst
+        self._pos = i
+        if len(s) > 6000:
+            self._pos -= len(s) - 600
+        return "".join(out)
+
+    def _bits(self, a, b, pol):
+        out = []
+        for k in range(a, b):
+            d = DMR_DIBIT[self.syms[k] if pol == 0 else 3 - self.syms[k]]
+            out += [(d >> 1) & 1, d & 1]
+        return out
+
+    def _data_burst(self, i, pol):
+        st = self._bits(i - 5, i, pol) + self._bits(i + 24, i + 29, pol)
+        cc = int("".join(map(str, st[0:4])), 2)
+        dt = int("".join(map(str, st[4:8])), 2)
+        self.cc[cc] = self.cc.get(cc, 0) + 1
+        self.dt[dt] = self.dt.get(dt, 0) + 1
+        out = ""
+        if dt == 0 and self.priv is None:
+            self.priv = "ja (PI-header sänds)"
+        if dt in (1, 2):
+            info = self._bits(i - 54, i - 5, pol) + self._bits(i + 29, i + 78, pol)
+            for fwd in (True, False):
+                d = bptc_extract(info, fwd)
+                by = [int("".join(map(str, d[k:k + 8])), 2) for k in range(0, 96, 8)]
+                par = rs1293_parity(by[:9])
+                mk = self.MASK[dt]
+                if [p ^ m for p, m in zip(par, mk)] == by[9:12]:
+                    out = self._lc(by[:9], dt)
+                    break
+        return out
+
+    def _lc(self, b, dt):
+        flco = b[0] & 0x3F
+        fid = b[1]
+        so = b[2]
+        dst = (b[3] << 16) | (b[4] << 8) | b[5]
+        src = (b[6] << 16) | (b[7] << 8) | b[8]
+        group = flco == 0
+        enc = bool(so & 0x40)
+        if enc:
+            self.priv = "ja (privacy-flagga i LC)"
+        elif self.priv is None or self.priv.startswith("nej"):
+            self.priv = "nej (enligt LC)"
+        lc = (("grupp " if group else "enskilt ") + f"{dst} från {src}"
+              + (" · NÖDLÄGE" if so & 0x80 else ""))
+        new = lc != self.lc
+        self.lc = lc
+        self.n_lc += 1
+        if new and dt == 1:
+            self.msg("DMR", str(src), lc + (" · krypterat" if enc else " · okrypterat"),
+                     name=("TG " if group else "ID ") + str(dst), kind="tal, " + ("grupp" if group else "enskilt"))
+            return f"[DMR] {lc}{' (krypterat)' if enc else ''}\n"
+        return ""
+
+    def har_synk(self):
+        return sum(self.counts.values()) >= 3
+
+    def fakta(self):
+        return {"baud": 4800.0, "fam": "FSK4", "klass": "4-FSK (DMR)", "toner": 4, "shift": 1296.0}
+
+    def varden(self):
+        if not self.counts:
+            return [("DMR", "söker synk …")]
+        typ = ", ".join(f"{k} {v}" for k, v in sorted(self.counts.items(), key=lambda kv: -kv[1])[:3])
+        v = [("DMR-synk", typ)]
+        if self.cc:
+            cc = max(self.cc, key=self.cc.get)
+            v.append(("Färgkod / burst", f"CC {cc} · " + ", ".join(
+                DMR_DT.get(d, str(d)) for d in sorted(self.dt, key=self.dt.get, reverse=True)[:2])))
+        if self.lc:
+            v.append(("Samtal", self.lc))
+        v.append(("Krypterat", self.priv or "okänt (ingen header hörd)"))
+        return v
+
+
+def _rrc_shape(sym_levels, sps, beta=0.2):
+    up = np.zeros(len(sym_levels) * sps)
+    up[::sps] = sym_levels
+    h = A._rrc(beta, sps, 6)
+    h = np.convolve(h, h)
+    return np.convolve(up, h / h.max(), mode="same")
+
+
+def make_dmr(fs, src=2400123, dst=2402, group=True, enc=False, cc=1, bursts=12):
+    """Testsignal: BS-bursts med Voice LC-header (BPTC + RS) och tal-synk, 4FSK 4800 sym/s."""
+    rng = np.random.default_rng(4)
+    lev_of = {d: i for i, d in enumerate(DMR_DIBIT)}
+
+    def dibits(bits):
+        return [lev_of[(bits[k] << 1) | bits[k + 1]] for k in range(0, len(bits), 2)]
+
+    def pat(p):
+        return [(p >> (47 - k)) & 1 for k in range(48)]
+    lc = [0x00 if group else 0x03, 0x00, 0x40 if enc else 0x00, (dst >> 16) & 255, (dst >> 8) & 255, dst & 255,
+          (src >> 16) & 255, (src >> 8) & 255, src & 255]
+    par = [p ^ 0x96 for p in rs1293_parity(lc)]
+    data = []
+    for byte in lc + par:
+        data += [(byte >> (7 - k)) & 1 for k in range(8)]
+    info = bptc_build(data)
+    slot = [(cc >> (3 - k)) & 1 for k in range(4)] + [0, 0, 0, 1] + [0] * 12   # DT = 1
+    syms = []
+    for b in range(bursts):
+        if b % 6 == 0:
+            bits = info[:98] + slot[:10] + pat(0xDFF57D75DF5D) + slot[10:] + info[98:]
+        else:
+            vb = rng.integers(0, 2, 216).tolist()
+            bits = vb[:108] + pat(0x755FD7DF75F7) + vb[108:]
+        syms += dibits(bits)
+    lv = np.asarray([-1944, -648, 648, 1944], float)[syms]
+    sps = int(round(fs / 4800))
+    f = _rrc_shape(lv, sps)
+    f = np.concatenate((np.zeros(sps * 50), f, np.zeros(sps * 50)))
+    return np.exp(2j * np.pi * np.cumsum(f) / fs).astype(np.complex64)
+
+
+AVKODARE_NYA = [NavtexAvkodare, PocsagAvkodare, AleAvkodare, FaxAvkodare, DmrAvkodare]
+for _k in AVKODARE_NYA:                 # registrera i analysen (oavsett vilken modul som laddades först)
+    if _k not in A.AVKODARE:
+        A.AVKODARE.append(_k)

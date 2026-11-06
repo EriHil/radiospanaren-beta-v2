@@ -1,5 +1,5 @@
 ══════════════════════════════════════════════════════════════════════
-  RADIOSPANAREN – MANUAL                                   version 2.2.0
+  RADIOSPANAREN – MANUAL                                   version 2.3.0
   SDR-mottagare, radioskanner och signallogg för Fedora
 ══════════════════════════════════════════════════════════════════════
 
@@ -193,9 +193,27 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
       FSK-sändningar, HFDL, NAVTEX, RTTY, POCSAG, DMR, P25, TETRA, AIS och DRM.
       Militärt/myndighet markeras med röd/orange prick. Det är igenkänning av
       vågformen: krypterad trafik kan identifieras men inte läsas.
-    • Klartext från avkodaren: RTTY (Baudot 45,45/50/75/100 Bd, båda
-      polariteterna) och Morse (CW, takten läres in automatiskt) avkodas
-      direkt. Fler avkodare läggs till efter hand.
+    • Klartext från avkodaren. Avkodaren väljs automatiskt efter signaltyp,
+      eller tvingas fram med listan "Avkodare" (bra när klassningen tvekar):
+        RTTY ......... Baudot 45,45/50/75/100 Bd, båda polariteterna
+        Morse ........ CW, takten lärs in automatiskt
+        NAVTEX ....... SITOR-B 100 Bd/170 Hz med FEC (518/490 kHz, 4209,5 kHz).
+                       Hela meddelanden (ZCZC … NNNN) med ämne, t.ex.
+                       navigationsvarning eller väderprognos
+        POCSAG ....... personsökare 512/1200/2400 Bd: adress (RIC), funktion
+                       och text eller siffror (kontrollsumman BCH rättar 1 fel)
+        ALE 2G ....... MIL-STD-188-141 (8-FSK 125 Bd, Golay + trippelredundans):
+                       anrop och sonderingar, t.ex. "HQ1 anropar SM5XYZ".
+                       Fungerar i både USB och LSB
+        Väderfax ..... HF-fax 120 rader/min (t.ex. DWD 3855/7880/13882,5 kHz
+                       USB): bilden växer i diagrammet; "🖼 Faxbild" öppnar hela
+                       bilden med Spara PNG, Ny bild och ◀ ▶ för radstarten.
+                       Starttonen ger ny bild, fasningen rättar radstarten.
+        DMR .......... 4FSK 4800: basstation/mobil, tal/data, färgkod, burst-typ
+                       och – när en LC-header hörs – grupp/ID, avsändare och
+                       om samtalet är krypterat. Tal avkodas inte.
+      Hela meddelanden (NAVTEX, POCSAG, ALE, DMR) läggs också i fliken
+      Avkodat och sparas i avkodat.jsonl.
   Skift + klick ställer bara in mottagaren, utan att byta analys.
   Knappar: bandbredd (Auto = signalens egen bredd), "Följ inställd" (analysera
   alltid demodulatorns kanal), "🎧 Lyssna" (ställer in demodulatorn på
@@ -205,7 +223,8 @@ Starta från programmenyn / skrivbordet, eller i terminalen:  radiospanaren
       "f": [[3.5, 3.6]], "info": "Lokal fyr"}]
   (fälten beskrivs överst i signaldb.py). Simulatorn har testsignaler på
   99,73 (RTTY), 99,77 (8PSK 2400 Bd), 99,83 (8-FSK), 99,86 (16 toner),
-  99,90 (Morse) och 100,20 MHz (BPSK).
+  99,90 (Morse) och 100,20 MHz (BPSK), samt avkodartester på 99,68 (NAVTEX),
+  100,12 (ALE), 100,25 (väderfax), 100,42 (POCSAG) och 100,62 MHz (DMR).
 
  Utseende
   Visning → Utseende: "Spanare" (mörk marin med bärnstensfärgade detaljer och

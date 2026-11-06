@@ -28,7 +28,7 @@ import threading
 
 APP_NAME = "Radiospanaren"
 APP_ID = "se.eh.Radiospanaren"
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "radiospanaren")
@@ -193,6 +193,7 @@ try:
     sys.path.insert(0, APP_DIR)
     import avkodare
     import analys
+    import analysavkodare
 except ImportError as _e:  # pragma: no cover
     setup_logging()
     log.critical("Saknar Python-paket: %s. Installera med: sudo dnf install python3-numpy python3-scipy", _e)
@@ -708,6 +709,21 @@ class SimSource(BaseSource):
         self.ais_t0 = time.monotonic()
         self.low = [(99.9e6 + off, sig, amp) for off, _n, sig, amp in analys.test_signals(48000)]
         self.low.append((99.9e6, analys.make_morse(48000, "CQ CQ DE SM5SIM SM5SIM PSE K   ", 20), 0.05))
+        V = analysavkodare
+        silence = np.zeros(48000 * 3, np.complex64)
+        self.low += [
+            (99.68e6, V.make_sitor_b(48000, "ZCZC SA01\nSIMULATOR NAVTEX. NAVIGATIONAL WARNING 42. "
+                                            "UNLIT BUOY 59-10N 018-40E.\nNNNN\n"), 0.05),
+            (100.12e6, np.concatenate((V.make_ale(48000, [("TO", "SM5"), ("DATA", "SIM")] * 4 +
+                                                  [("TIS", "HQ1")] * 2), silence,
+                                       V.make_ale(48000, [("TWAS", "NET")] * 2), silence)), 0.05),
+            (100.25e6, V.make_fax(48000, rows=240), 0.05),
+            (100.42e6, np.concatenate((V.make_pocsag(48000, 1200, [
+                (1234567, 3, "SIMULATOR: LARM BRAND KV 12", False), (200401, 0, "0701234567", True)]),
+                silence)), 0.05),
+            (100.62e6, np.concatenate((V.make_dmr(48000, bursts=60), silence)), 0.05),
+        ]
+        self._lowcache = {}
         self._take()
         log.info("Simulatorn startad")
 
@@ -719,24 +735,35 @@ class SimSource(BaseSource):
             time.sleep(d)
         elif d < -0.5:
             self.t_next = time.monotonic()
-        t = (self.n0 + np.arange(BLOCK)) / SR
-        x = (self.rng.standard_normal(BLOCK) + 1j * self.rng.standard_normal(BLOCK)) * 0.006
-        for f, kind, a in self.SIGS:
+        t = (self.n0 + np.arange(BLOCK)) / SR                       # absolut tid (för av/på-mönster)
+        t1 = (((self.n0 + np.arange(BLOCK)) % SR) / SR).astype(np.float32)   # tid modulo 1 s (toner i hela Hz)
+        w = np.float32(2 * np.pi)
+        x = ((self.rng.standard_normal(BLOCK, np.float32) + 1j * self.rng.standard_normal(BLOCK, np.float32))
+             * np.float32(0.006)).astype(np.complex64)
+
+        def carrier(idx, fo, a):
+            key = ("sig", idx, round(fo))
+            car = self._lowcache.get(key)
+            if car is None:
+                car = (a * np.exp(2j * np.pi * fo * np.arange(BLOCK) / SR)).astype(np.complex64)
+                self._lowcache[key] = car
+            return car * np.complex64(np.exp(2j * np.pi * ((fo * self.n0 / SR) % 1.0)))
+        for si, (f, kind, a) in enumerate(self.SIGS):
             fo = f - self.center
             if abs(fo) > SR / 2:
                 continue
-            ph = 2 * np.pi * fo * t
             if kind == "WFM":
-                ph = ph - 37.5 * np.cos(2 * np.pi * 1000 * t) - (22500 / 440) * np.cos(2 * np.pi * 440 * t)
-                x += a * np.exp(1j * ph)
+                mod = -37.5 * np.cos(w * 1000 * t1) - np.float32(22500 / 440) * np.cos(w * 440 * t1)
+                x += carrier(si, fo, a) * np.exp(1j * mod).astype(np.complex64)
             elif kind == "AM":
-                x += a * (1 + 0.7 * np.sin(2 * np.pi * 600 * t)) * np.exp(1j * ph)
+                x += carrier(si, fo, a) * (1 + np.float32(0.7) * np.sin(w * 600 * t1))
             elif kind == "CW":
                 key = self.morse[(t / 0.07).astype(np.int64) % len(self.morse)]
-                x += a * key * np.exp(1j * ph)
+                x += carrier(si, fo, a) * key
             elif kind == "NFM":
                 on = ((t + f / 1e5) % 8.0) < 3.0
-                x += a * on * np.exp(1j * (ph + 3 * np.sin(2 * np.pi * 1000 * t)))
+                if on.any():
+                    x += carrier(si, fo, a) * on * np.exp(1j * 3 * np.sin(w * 1000 * t1)).astype(np.complex64)
             elif kind in self.bursts:
                 arr, period = self.bursts[kind]
                 st = self.burst_start[kind]
@@ -752,16 +779,34 @@ class SimSource(BaseSource):
                 if lo < hi:
                     env = np.zeros(BLOCK, np.complex64)
                     env[lo - self.n0:hi - self.n0] = arr[lo - st:hi - st]
-                    x += a * env * np.exp(1j * ph)
+                    x += carrier(si, fo, a) * env
             elif kind == "USB":
                 on = (t % 5.0) < 2.5
-                x += a * on * (np.exp(1j * (ph + 2 * np.pi * 700 * t)) + 0.7 * np.exp(1j * (ph + 2 * np.pi * 1900 * t)))
-        for f, sig, a in self.low:          # analysens testsignaler (48 kHz-slingor)
+                if on.any():
+                    x += carrier(si, fo, a) * on * (np.exp(1j * w * 700 * t1) +
+                                                    0.7 * np.exp(1j * w * 1900 * t1)).astype(np.complex64)
+        if len(self._lowcache) > 200:                   # mittfrekvensen har bytts många gånger
+            self._lowcache = {k: v for k, v in self._lowcache.items() if k == "pat"}
+        # analysens testsignaler (48 kHz-slingor). Interpolationsmönster och bärvåg räknas en gång
+        # per mittfrekvens – blocket (65536) är en multipel av 32, så mönstret upprepas varje block.
+        if "pat" not in self._lowcache:
+            ar = np.arange(BLOCK)
+            self._lowcache["pat"] = (ar // 32, ((ar % 32) / 32).astype(np.float32))
+        bi, fr = self._lowcache["pat"]
+        for k, (f, sig, a) in enumerate(self.low):
             fo = f - self.center
             if abs(fo) > SR / 2:
                 continue
-            y = analys.loop_sample(sig, (self.n0 + np.arange(BLOCK)) / (SR / 48000))
-            x += a * y * np.exp(2j * np.pi * fo * t)
+            key = ("low", k, round(fo))
+            car = self._lowcache.get(key)
+            if car is None:
+                car = (a * np.exp(2j * np.pi * fo * np.arange(BLOCK) / SR)).astype(np.complex64)
+                self._lowcache[key] = car
+            L = len(sig)
+            i = (self.n0 // 32 + bi) % L
+            y = sig[i] * (1 - fr) + sig[(i + 1) % L] * fr
+            ph = np.complex64(np.exp(2j * np.pi * ((fo * self.n0 / SR) % 1.0)))
+            x += y * car * ph
         self.n0 += BLOCK
         return x.astype(np.complex64), self.center, None
 
@@ -2940,7 +2985,21 @@ def run_gui(args):
                 cr.show_text(title)
                 return
             col = S["line"][:3]
-            if r.get("konst") is not None:
+            fd = r.get("bild")
+            if fd is not None and fd.bild is not None and len(fd.bild):
+                title = f"Faxbild ({len(fd.rows)} rader)"
+                img = fd.bild[-int(h * fd.W / max(1, w)):] if len(fd.bild) else fd.bild
+                surf = gray_surface(img)
+                cr.save()
+                cr.rectangle(x0, y0, w, h)
+                cr.clip()
+                sc = w / fd.W
+                cr.translate(x0, y0 + h - len(img) * sc)
+                cr.scale(sc, sc)
+                cr.set_source_surface(surf, 0, 0)
+                cr.paint()
+                cr.restore()
+            elif r.get("konst") is not None:
                 title = f"Konstellation ({r['klass'].split(' ')[0]})"
                 s = np.asarray(r["konst"])
                 cx, cy, rad = x0 + w / 2, y0 + h / 2, min(w, h) / 2 * 0.62
@@ -3008,6 +3067,83 @@ def run_gui(args):
             cr.set_line_width(1.2)
             cr.stroke()
 
+    _GRAY = (0xFF000000 | (np.arange(256, dtype=np.uint32) * 0x010101)).astype(np.uint32)
+
+    def gray_surface(img):
+        img = np.ascontiguousarray(img)
+        rgba = np.ascontiguousarray(_GRAY[img])
+        h, w = img.shape
+        return cairo.ImageSurface.create_for_data(memoryview(rgba), cairo.FORMAT_ARGB32, w, h, w * 4)
+
+    class FaxWindow(Adw.Window):
+        """Hela faxbilden med spara, ny bild och manuell justering av radstarten."""
+
+        def __init__(self, panel):
+            super().__init__(title="Väderfax – Radiospanaren", transient_for=panel.win,
+                             default_width=820, default_height=900)
+            self.panel = panel
+            tv = Adw.ToolbarView()
+            hb = Adw.HeaderBar()
+            for label, tip, cb in (("💾 Spara PNG", "Spara bilden i inspelningsmappen", self.save),
+                                   ("Ny bild", "Börja om med en tom bild", self.new),
+                                   ("◀", "Flytta radstarten åt vänster", lambda: self.shift(-12)),
+                                   ("▶", "Flytta radstarten åt höger", lambda: self.shift(12))):
+                b = Gtk.Button(label=label, tooltip_text=tip)
+                b.connect("clicked", lambda *_, cb=cb: cb())
+                hb.pack_start(b)
+            tv.add_top_bar(hb)
+            self.area = Gtk.DrawingArea(hexpand=True, vexpand=True)
+            self.area.set_draw_func(self.on_draw)
+            sw = Gtk.ScrolledWindow()
+            sw.set_child(self.area)
+            self.sw = sw
+            tv.set_content(sw)
+            self.set_content(tv)
+            self.connect("close-request", lambda *_: self.set_visible(False) or True)
+
+        def dec(self):
+            return self.panel.fax_dec
+
+        def on_draw(self, area, cr, W, H, *_):
+            cr.set_source_rgb(0.1, 0.1, 0.1)
+            cr.paint()
+            d = self.dec()
+            if d is None or d.bild is None or not len(d.bild):
+                return
+            sc = W / d.W
+            need = int(len(d.bild) * sc) + 1
+            if abs(area.get_content_height() - need) > 2:
+                area.set_content_height(need)
+            cr.scale(sc, sc)
+            cr.set_source_surface(gray_surface(d.bild), 0, 0)
+            cr.paint()
+
+        def save(self):
+            d = self.dec()
+            if d is None or d.bild is None:
+                return
+            path = os.path.join(rec_dir(), f"fax_{datetime.datetime.now():%Y%m%d-%H%M%S}.png")
+            try:
+                gray_surface(d.bild).write_to_png(path)
+                self.panel.win.toast(f"Faxbilden sparad: {path}")
+                log.info("Faxbild sparad: %s", path)
+            except Exception as ex:
+                self.panel.win.toast(f"Kunde inte spara: {ex}")
+
+        def new(self):
+            d = self.dec()
+            if d is not None:
+                d._new_image()
+                self.area.queue_draw()
+
+        def shift(self, px):
+            d = self.dec()
+            if d is not None:
+                d.offset = (d.offset + px) % d.W
+                if d.rows:
+                    d.bild = np.roll(np.asarray(d.rows[-1600:]), -d.offset, axis=1)
+                self.area.queue_draw()
+
     class AnalysPanel(Gtk.Box):
         ROWS = [("klass", "Signaltyp"), ("freq", "Frekvens (mitt)"), ("avv", "Avvikelse från mål"),
                 ("snr", "SNR"), ("occ", "Upptagen bandbredd"), ("baud", "Symboltakt"),
@@ -3038,6 +3174,18 @@ def run_gui(args):
             self.bw_dd.set_tooltip_text("Analysbandbredd")
             self.bw_dd.connect("notify::selected", self._on_bw)
             tb.append(self.bw_dd)
+            self.dec_names = [k.namn for k in analys.AVKODARE]
+            self.dec_dd = Gtk.DropDown.new_from_strings(["Avkodare: automatiskt"] + self.dec_names + ["Ingen avkodare"])
+            self.dec_dd.set_tooltip_text("Välj avkodare – automatiskt efter signaltyp, eller tvinga fram en viss")
+            self.dec_dd.connect("notify::selected", self._on_dec)
+            tb.append(self.dec_dd)
+            self.fax_btn = Gtk.Button(label="🖼 Faxbild")
+            self.fax_btn.set_tooltip_text("Visa den mottagna faxbilden i ett eget fönster")
+            self.fax_btn.connect("clicked", lambda *_: self.open_fax())
+            self.fax_btn.set_visible(False)
+            self.fax_win = None
+            self.fax_dec = None
+            tb.append(self.fax_btn)
             self.follow = Gtk.ToggleButton(label="Följ inställd")
             self.follow.set_tooltip_text("Analysera alltid den kanal som demodulatorn är inställd på")
             self.follow.set_active(bool(win.conf.get("analys_follow", False)))
@@ -3164,6 +3312,8 @@ def run_gui(args):
             bw = self.chosen_bw(auto_bw)
             self.auto_bw = auto_bw
             self.an.set_target(f, bw)
+            self.fax_dec = None
+            self.fax_btn.set_visible(False)
             self.last = None
             self._rid = -1
             self.mini.clear()
@@ -3187,6 +3337,23 @@ def run_gui(args):
             t = self.an.tap.target
             if t is not None:
                 self.set_target(t, getattr(self, "auto_bw", self.an.tap.bw or 3000))
+
+        def _on_dec(self, *_):
+            i = int(self.dec_dd.get_selected())
+            if i == 0:
+                self.an.tvinga = None
+            elif i <= len(self.dec_names):
+                self.an.tvinga = self.dec_names[i - 1]
+            else:
+                self.an.tvinga = ""          # ingen avkodare körs
+            log.info("Signalanalys: avkodare %s", self.an.tvinga if self.an.tvinga is not None else "automatiskt")
+
+        def open_fax(self):
+            if self.fax_dec is None:
+                return
+            if self.fax_win is None:
+                self.fax_win = FaxWindow(self)
+            self.fax_win.present()
 
         def _on_follow(self, b):
             self.win.conf["analys_follow"] = b.get_active()
@@ -3251,6 +3418,21 @@ def run_gui(args):
                     self.last = r
                     self._update_rows(r)
                     self.diag.queue_draw()
+                    fd = r.get("bild")
+                    if fd is not None:
+                        self.fax_dec = fd
+                        self.fax_btn.set_visible(True)
+                        if self.fax_win is not None and self.fax_win.get_visible():
+                            self.fax_win.area.queue_draw()
+            while an.msg_q:
+                try:
+                    m = an.msg_q.popleft()
+                except IndexError:
+                    break
+                try:
+                    self.win._on_decoded(m)
+                except Exception:
+                    log.exception("Kunde inte visa avkodat meddelande")
             while an.text_q:
                 try:
                     name, txt = an.text_q.popleft()
@@ -5065,13 +5247,27 @@ def selftest(seconds=4.0):
     psk_ok = feat["fam"] == "PSK8" and bool(kand) and kand[0][1]["namn"] in ("STANAG 4285", "MIL-STD-188-110A/B (seriell)")
     print(f"  Signalanalys 8PSK 2400 Bd: {'OK' if psk_ok else 'FEL'} ({feat['klass']}, "
           f"{kand[0][1]['namn'] if kand else 'ingen kandidat'})")
+    V = analysavkodare
+    tests = [
+        ("NAVTEX", V.make_sitor_b(48000, "ZCZC SA01\nSJALVTEST NAVTEX\nNNNN\n"), 20e3, 500, 24, "SJALVTEST NAVTEX"),
+        ("POCSAG", np.concatenate((V.make_pocsag(48000, 1200, [(1234567, 3, "SJALVTEST POCSAG", False)]),
+                                   np.zeros(48000, np.complex64))), 25e3, 15000, 7, "SJALVTEST POCSAG"),
+        ("ALE", V.make_ale(48000, [("TO", "SM5")] * 3 + [("TIS", "HQ1")] * 2), 41625, 3000, 6, "HQ1 anropar SM5"),
+        ("DMR", V.make_dmr(48000, bursts=36), 25e3, 12500, 4, "grupp 2402 från 2400123"),
+    ]
+    dec_ok = True
+    for name, sig, off, bw, secs, want in tests:
+        feat, text, _k = tap_run(sig, off, bw, secs=secs)
+        good = want in text
+        dec_ok &= good
+        print(f"  Analysavkodare {name}: {'OK' if good else 'FEL'} ({feat['klass'] if feat else '–'})")
     try:
         import adsb
         adsb_ok = adsb.selftest(verbose=True)
     except Exception as ex:
         print(f"  ADS-B-avkodare: FEL ({ex})")
         adsb_ok = False
-    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok and adsb_ok and rtty_ok and psk_ok
+    ok = not errors and st["blocks"] > 0 and bytes_out[0] > 0 and acars_ok and ais_ok and aprs_ok and adsb_ok and rtty_ok and psk_ok and dec_ok
     print("RESULTAT: " + ("OK" if ok else f"FEL {errors}"))
     log.info("Självtest: %s (%d block, %.1f ms/block)", "OK" if ok else "FEL", st["blocks"], st["proc_ms"])
     return 0 if ok else 1

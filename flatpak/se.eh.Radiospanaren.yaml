@@ -91,7 +91,7 @@ modules:
     build-commands:
       - install -d /app/share/radiospanaren
       - install -m644 radiospanaren.py avkodare.py adsb.py adsb_karta.py kartvy.py aktivitet.py
-        analys.py signaldb.py MANUAL.txt /app/share/radiospanaren/
+        analys.py analysavkodare.py signaldb.py MANUAL.txt /app/share/radiospanaren/
       - |
         cat > /app/bin/radiospanaren <<'EOF'
         #!/bin/sh

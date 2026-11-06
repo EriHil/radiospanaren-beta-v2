@@ -130,7 +130,7 @@ class ChannelTap:
             st.append(_Decim(firwin(24 * D + 1, 0.4 * self.fs, fs=sr), D))
         self.stages = st
         self.ph = 0.0
-        cap = int(self.fs * 2.0)
+        cap = int(self.fs * 4.0)
         self.ring = np.zeros(cap, np.complex64)
         self.total = 0
         self.win = np.hanning(self.WF_N).astype(np.float32)
@@ -525,18 +525,23 @@ def _fsk_baud(fi, fs, tones):
     if len(runs) < 10:
         return None
     T0 = float(np.percentile(runs, 15))
-    best, bT = np.inf, None
-    for T in np.linspace(0.75 * T0, 1.3 * T0, 300):
+    errs = []
+    for T in np.linspace(0.4 * T0, 1.3 * T0, 400):
         q = runs / T
         k = np.round(q)
-        ok = (k >= 1) & (k <= 12)
+        ok = (k >= 1) & (k <= 16)
         if ok.sum() < 0.8 * len(q):
+            errs.append((T, np.inf))
             continue
-        err = float(np.mean((q[ok] - k[ok]) ** 2))
-        if err < best:
-            best, bT = err, T
-    if bT is None or best > 0.03:
+        errs.append((T, float(np.mean((q[ok] - k[ok]) ** 2))))
+    good = [T for T, e in errs if e < 0.02]
+    if not good:
         return None
+    # största takten som passar alla runlängder (T/2, T/3 … passar också men är fel)
+    bT = max(good)
+    # finjustera kring vald takt
+    near = [(e, T) for T, e in errs if bT * 0.88 <= T <= bT]
+    bT = min(near)[1]
     b0 = fs / bT
     imp = np.zeros(len(idx))
     imp[ch] = 1.0
@@ -624,6 +629,14 @@ class Avkodare:
         """[(rubrik, värde)] att visa i värderutan."""
         return []
 
+    def har_synk(self):
+        """Sant när avkodaren har synk – då får den företräde framför andra."""
+        return False
+
+    def fakta(self):
+        """Säkra värden från en avkodare med synk (t.ex. exakt symboltakt), ersätter mätningen."""
+        return {}
+
 
 ITA2_LTRS = "\0E\nA SIU\rDRJNFCKTZLWHYPQOBG\x0eMXV\x0f"
 ITA2_FIGS = "\x003\n- '87\r\x054\x07,!:(5+)2#6019?&\x0e./=\x0f"
@@ -653,6 +666,8 @@ class RttyAvkodare(Avkodare):
 
     def passar(self, feat):
         b, s = feat.get("baud"), feat.get("shift")
+        if b and (abs(b - 100) < 5 or abs(b - 50) < 2.5) and s and 130 <= s <= 230:
+            return False                 # SITOR-B/NAVTEX-signatur (fasningen ser ut som 50 Bd) – sköts av NAVTEX
         return feat.get("fam") == "FSK2" and b and 40 <= b <= 115 and s and 60 <= s <= 1100
 
     def feed(self, z, fs, feat):
@@ -868,7 +883,7 @@ class CwAvkodare(Avkodare):
         return [("Morse", f"{self.wpm:.0f} ord/min" if self.wpm else "lär sig takten …")]
 
 
-AVKODARE = [RttyAvkodare, CwAvkodare]
+AVKODARE = [RttyAvkodare, CwAvkodare]   # fler läggs till längst ner (analysavkodare.py)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -884,6 +899,8 @@ class Analyzer:
         self.mode = None
         self.dec = [k() for k in AVKODARE]
         self.text_q = deque(maxlen=200)
+        self.msg_q = deque(maxlen=200)     # hela meddelanden till fliken Avkodat
+        self.tvinga = None                 # namn på avkodare som alltid ska köras (None = automatiskt)
         self._gen = None
         self._ptr = 0
         self._last_total = -1
@@ -921,6 +938,7 @@ class Analyzer:
             for dd in self.dec:
                 dd.reset()
                 dd._ok_feat = None
+                dd._ptr = None
         feat = analyze(z, fs, bw)
         f_abs = tgt + feat.get("f_mid", 0.0)
         feat["f_abs"] = f_abs
@@ -934,21 +952,51 @@ class Analyzer:
         feat["kandidater"] = signaldb.match(feat, f_abs, self.db, ac)
         zn, self._ptr = self.tap.since(self._ptr)
         vals, new = [], ""
+        locked = [dd for dd in self.dec if dd.har_synk() and getattr(dd, "_ok_feat", None) is not None
+                  and now - dd._ok_t < 4]
         for dd in self.dec:
+            if locked and dd not in locked and self.tvinga is None:
+                continue
             use = None
-            if dd.passar(feat):
+            if self.tvinga is not None:
+                if dd.namn != self.tvinga:
+                    continue
+                if feat.get("fam") != "BRUS":
+                    use = feat
+            elif dd.passar(feat):
                 dd._ok_t, dd._ok_feat = now, feat
                 use = feat
             elif getattr(dd, "_ok_feat", None) is not None and now - dd._ok_t < 4 and feat.get("fam") != "BRUS":
                 use = dd._ok_feat            # en enstaka missad mätning ska inte bryta avkodningen
             if use is not None and zn is not None:
-                txt = dd.feed(zn, fs, use)
+                # varje avkodare har en egen läspekare: när den startar får den hela ringbufferten
+                # (ca 4 s), så att början av en sändning inte går förlorad medan klassningen kommer ikapp
+                zd, dd._ptr = self.tap.since(dd._ptr if getattr(dd, "_ptr", None) is not None else -10 ** 12)
+                if zd is None or not len(zd):
+                    continue
+                txt = dd.feed(zd, fs, use)
                 if txt:
                     self.text_q.append((dd.namn, txt))
                     new += txt
                 vals += dd.varden()
                 feat["avkodare"] = dd.namn
+                if dd.har_synk():
+                    fk = dd.fakta()
+                    if fk:
+                        feat.update(fk)
+                        feat["fakta_fran"] = dd.namn
+                for m in getattr(dd, "msgs", [])[:]:
+                    m["freq"] = f_abs
+                    m.setdefault("level", feat.get("snr", 0.0))
+                    m.setdefault("details", [("Avkodare", dd.namn), ("SNR", f"{feat.get('snr', 0):.1f} dB")])
+                    self.msg_q.append(m)
+                if getattr(dd, "msgs", None):
+                    dd.msgs.clear()
+                if getattr(dd, "bild", None) is not None:
+                    feat["bild"] = dd
         feat["avk_varden"] = vals
+        if feat.get("fakta_fran"):
+            feat["kandidater"] = signaldb.match(feat, f_abs, self.db, ac)
         self.result = feat
         self.result_id += 1
         return feat, new
@@ -1095,3 +1143,13 @@ def test_signals(fs=48000):
         (-40e3, "16 toner 75 Bd", make_ofdm(fs, 75, link11, 8.0), 0.05),
         (300e3, "BPSK 1200", make_psk(fs, 1200, 2, 8.0, seed=5), 0.05),
     ]
+
+
+# ── registrera de större avkodarna (egen modul) ──
+try:
+    import analysavkodare as _av        # om modulen laddas först registrerar den sig själv i slutet
+    for _k in getattr(_av, "AVKODARE_NYA", []):
+        if _k not in AVKODARE:
+            AVKODARE.append(_k)
+except ImportError:                     # pragma: no cover
+    pass
