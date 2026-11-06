@@ -565,6 +565,17 @@ class BaseSource:
         raise NotImplementedError
 
 
+def rtl_finns():
+    """Finns minst en RTL-SDR-dongel ansluten via USB?"""
+    try:
+        libname = ctypes.util.find_library("rtlsdr") or "librtlsdr.so.2"
+        lib = ctypes.CDLL(libname)
+        lib.rtlsdr_get_device_count.restype = ctypes.c_uint32
+        return int(lib.rtlsdr_get_device_count()) > 0
+    except Exception:
+        return False
+
+
 class RtlSource(BaseSource):
     kind = "rtl"
     name = "RTL-SDR"
@@ -6534,12 +6545,16 @@ def run_gui(args):
                 log.error("Saknar %s", path)
                 return
             src = self.conf["source"]
-            if self.engine.running:
-                if src in ("rtl",):
+            if src == "tcp":
+                pass
+            elif rtl_finns():
+                if self.engine.running and src == "rtl":
                     self.btn_start.set_active(False)       # släpp dongeln
                     self.toast("Mottagningen stoppad – Flygradar använder dongeln")
-            if src in ("file", "kiwi"):
-                src = "rtl"                                # Flygradar: inte IQ-filer, Kiwi saknar 1090 MHz
+                src = "rtl"
+            else:
+                src = "adsblol"
+                self.toast("Ingen SDR-dongel ansluten – Flygradar hämtar data från adsb.lol")
             cmd = [sys.executable, path, "--kalla", src, "--start"]
             if src == "tcp":
                 cmd += ["--tcp", self.conf["tcp_addr"]]

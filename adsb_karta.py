@@ -39,9 +39,18 @@ EMERGENCY = {"7500": "KAPNING", "7600": "RADIOFEL", "7700": "NÖDLÄGE"}
 
 def load_rconf():
     base = R.load_conf()
+    lat, lon = 59.33, 18.06
+    if base.get("my_pos"):
+        try:
+            import webbmottagare
+            p = webbmottagare.parse_position(base["my_pos"])
+            if p:
+                lat, lon = p
+        except Exception:
+            pass
     conf = {"source": base.get("source", "rtl") if base.get("source") in SOURCES else "rtl",
             "tcp_addr": base.get("tcp_addr", "127.0.0.1:1234"), "ppm": base.get("ppm", 0),
-            "gain": None, "lat": 59.33, "lon": 18.06, "zoom": 7.5, "window": [1350, 850],
+            "gain": None, "lat": lat, "lon": lon, "zoom": 7.5, "window": [1350, 850],
             "trails": True, "units": "ft"}
     try:
         with open(RADAR_CONF, encoding="utf-8") as f:
@@ -544,6 +553,12 @@ def run_gui(args):
         def _on_toggle(self, btn):
             if btn.get_active():
                 on_error = lambda m: GLib.idle_add(self._on_error, m)
+                if self.conf["source"] == "rtl" and not R.rtl_finns():
+                    self._auto_adsblol = True
+                    self.conf["source"] = "adsblol"
+                    self.src_dd.set_selected(SOURCES.index("adsblol"))
+                    self.toast("Ingen RTL-SDR ansluten – hämtar flygplan från adsb.lol")
+                    log.info("Ingen RTL-SDR ansluten – växlar automatiskt till adsb.lol")
                 if self.conf["source"] == "adsblol":
                     self.rx = A.AdsbLolFeed(self.conf["lat"], self.conf["lon"], ADSBLOL_UA, on_error=on_error)
                 else:
@@ -723,6 +738,8 @@ def run_gui(args):
                     self.conf["lat"] = float(self.viewport.get_latitude())
                     self.conf["lon"] = float(self.viewport.get_longitude())
                 self.conf["window"] = [self.get_width(), self.get_height()]
+                if getattr(self, "_auto_adsblol", False) and self.conf.get("source") == "adsblol":
+                    self.conf["source"] = "rtl"
                 save_rconf(self.conf)
                 if self.rx:
                     self.rx.stop()
@@ -752,16 +769,23 @@ def run_gui(args):
                                                       Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             conf = load_rconf()
             a = self.args
+            auto_start = bool(a.start)
+            auto_adsblol = False
             if a.source:
                 conf["source"] = a.source
-            if a.tcp:
+            elif a.tcp:
                 conf["source"], conf["tcp_addr"] = "tcp", a.tcp
+            elif not R.rtl_finns() and conf["source"] in ("rtl", "adsblol"):
+                conf["source"] = "adsblol"
+                auto_start = True
+                auto_adsblol = True
             if a.gain is not None:
                 conf["gain"] = a.gain
             self.win = RadarWindow(self, conf)
+            self.win._auto_adsblol = auto_adsblol
             self.win.present()
             R.on_unix_signals(lambda: self.win.close())
-            if a.start:
+            if auto_start:
                 GLib.idle_add(lambda: self.win.btn.set_active(True) or False)
             if a.skarmbild:
                 GLib.timeout_add(int(float(a.skarmbild[1]) * 1000),
